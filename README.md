@@ -93,6 +93,15 @@ python edk2_json_generator.py \
 | `CVE_List.xlsx` | Excel report of CVEs found for each SBOM component |
 | `edk2_json_generator_<timestamp>.log` | Detailed log file |
 
+> **Known issue:** The CDX merge step uses `uswid --fixup`, which may crash with
+> `TypeError: object of type 'NoneType' has no len()` on components that lack a
+> `source_dir` value. If this happens, the individual `.cdx.json` files in
+> `cdx_json_output/` are still valid and can be used with Scenario 3 to generate
+> CVE lists. You can also merge them manually without the `--fixup` flag:
+> ```bash
+> uswid --load cdx_json_output/File1.cdx.json --load cdx_json_output/File2.cdx.json --save merged.cdx.json
+> ```
+
 ---
 
 ### Scenario 3 — SBOM Already Generated: Generate CVE List Only
