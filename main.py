@@ -13,6 +13,9 @@ from requests.adapters import HTTPAdapter
 
 import pandas as pd
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -445,9 +448,14 @@ def main():
     parser = argparse.ArgumentParser(description='Clone git repo and generate SBOM with CVE analysis')
     parser.add_argument('-r', '--repo', required=True, help='Git repository URL')
     parser.add_argument('-o', '--output', required=True, help='Output CDX filename (without extension)')
-    parser.add_argument('-k', '--apikey', required=True, help='NVD API Key for CVE generation')
+    parser.add_argument('-k', '--apikey', default=None, help='NVD API Key for CVE generation (or set NVD_API_KEY in .env)')
     
     args = parser.parse_args()
+
+    api_key = args.apikey or os.environ.get('NVD_API_KEY')
+    if not api_key:
+        logger.error("NVD API key is required. Provide via -k flag or set NVD_API_KEY in .env file.")
+        sys.exit(1)
     
     repo_url = args.repo
     output_filename = args.output
@@ -565,7 +573,7 @@ def main():
 
     # 4. Generate CVEs from CDX file
     logger.info(f"Generating CVE analysis...")
-    generate_cves(cdx_file, args.apikey, max_workers=6)
+    generate_cves(cdx_file, api_key, max_workers=6)
 
     logger.info("Completed successfully!")
 
