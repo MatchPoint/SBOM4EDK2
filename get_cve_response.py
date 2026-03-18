@@ -1,4 +1,6 @@
+import argparse
 import logging
+import os
 import sys
 import ast
 import threading
@@ -8,6 +10,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 import json
 from datetime import datetime
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -36,9 +41,9 @@ def log_api_call(cpe_pattern, url, status_code, response_json):
         })
         logger.debug(f"Logged API call for CPE pattern: {cpe_pattern}, Status: {status_code}")
 
-def nvd_cpe_pattern_search(cpe_pattern):
+def nvd_cpe_pattern_search(cpe_pattern, api_key):
     headers = {
-        'apiKey': ''
+        'apiKey': api_key
     }
     cve_det = pd.DataFrame()
     # adding this 30 sconds sleep time due to issue reported on 30/01/2026
@@ -159,7 +164,7 @@ def isInvalidCpePattern(name, version):
 
     return invalid
 
-def process_component(sa, component_idx, total_components):
+def process_component(sa, component_idx, total_components, api_key):
     """
     Process a single component and return CVE details and invalid patterns.
     Thread-safe function for concurrent processing.
@@ -168,6 +173,7 @@ def process_component(sa, component_idx, total_components):
         sa: SBOM component dictionary
         component_idx: Index of component for logging
         total_components: Total number of components for logging
+        api_key: NVD API key
 
     Returns:
         Tuple of (cve_details_list, invalid_pattern_dict or None)
@@ -241,7 +247,7 @@ def process_component(sa, component_idx, total_components):
         cpe_pattern = cpe_pattern.replace(' ', '')
 
     logger.info(f"Searching CVEs for CPE pattern: {cpe_pattern}")
-    data, cve_results, invalid_cpe_pattern = nvd_cpe_pattern_search(cpe_pattern)
+    data, cve_results, invalid_cpe_pattern = nvd_cpe_pattern_search(cpe_pattern, api_key)
 
     nvd_details = []
     if not data.empty:
@@ -343,12 +349,13 @@ def generate_api_calls_report():
     except Exception as e:
         logger.error(f"Failed to generate API calls report: {e}", exc_info=True)
 
-def generate_cves(output_cdx_name, max_workers=10):
+def generate_cves(output_cdx_name, api_key, max_workers=10):
     """
     Generate CVE Excel sheet using multi-threaded API calls.
 
     Args:
         output_cdx_name: Path to the CDX JSON file
+        api_key: NVD API key
         max_workers: Number of concurrent threads for API calls (default: 10)
     """
     global api_calls_log
@@ -373,7 +380,7 @@ def generate_cves(output_cdx_name, max_workers=10):
     def process_and_collect(idx, sa):
         """Wrapper function to process component and safely collect results"""
         try:
-            nvd_details, invalid_pattern = process_component(sa, idx, len(sbom_components))
+            nvd_details, invalid_pattern = process_component(sa, idx, len(sbom_components), api_key)
 
             # Thread-safe collection of results
             with lock:
@@ -432,4 +439,15 @@ def generate_cves(output_cdx_name, max_workers=10):
         sys.exit(1)
 
 
-generate_cves('edk.cdx.json')
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Generate CVE list from an existing SBOM (.cdx.json) file')
+    parser.add_argument('cdx_file', help='Path to the CycloneDX SBOM (.cdx.json) file')
+    parser.add_argument('-k', '--apikey', default=None, help='NVD API Key (or set NVD_API_KEY in .env)')
+    args = parser.parse_args()
+
+    api_key = args.apikey or os.environ.get('NVD_API_KEY')
+    if not api_key:
+        logger.error("NVD API key is required. Provide via -k flag or set NVD_API_KEY in .env file.")
+        sys.exit(1)
+
+    generate_cves(args.cdx_file, api_key)
