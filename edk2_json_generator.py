@@ -32,15 +32,22 @@ from requests.adapters import HTTPAdapter
 
 import pandas as pd
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 parser = argparse.ArgumentParser(description='Run uswid over all .inf files under a location')
 parser.add_argument('-l', '--location', required=True, help='Root location to scan')
 parser.add_argument('-n', '--jsonname', required=True, help='Name of final json file to generate. Give the name without extension.')
-parser.add_argument('-k', '--apikey', required=True, help='NVD API Key for CVE generation')
+parser.add_argument('-k', '--apikey', default=None, help='NVD API Key for CVE generation (or set NVD_API_KEY in .env)')
 parser.add_argument('--uswid-data', default=None, help='Path to uswid-data repository for dependency fallback')
 parser.add_argument('--parent-yaml', default=None, help='Optional parent component YAML to load first')
 parser.add_argument('--max-workers', type=int, default=12, help='Concurrency for INF processing (default: 12)')
 args = parser.parse_args()
+args.apikey = args.apikey or os.environ.get('NVD_API_KEY')
+if not args.apikey:
+    print("Error: NVD API key is required. Provide via -k flag or set NVD_API_KEY in .env file.")
+    sys.exit(1)
 
 # Configure logging
 logging.basicConfig(
