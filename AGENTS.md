@@ -26,9 +26,24 @@ python main.py -o <output_name> -k <nvd_api_key> -r <edk2_repo_url>
 python edk2_json_generator.py -l <location> -n <json_name> -k <nvd_api_key> [--uswid-data <path>] [--parent-yaml <path>]
 ```
 
+### Quick validation (hello-world)
+
+To verify the environment works without cloning a full EDK2 repo, use `main.py`'s internal functions against a sample CycloneDX SBOM JSON:
+
+```python
+import sys, os
+sys.path.insert(0, '/workspace')
+from main import parse_sbom_file, generate_cves
+components = parse_sbom_file('path/to/sample.cdx.json')
+generate_cves('path/to/sample.cdx.json', os.environ['NVD_API_KEY'], max_workers=2)
+```
+
+The `NVD_API_KEY` secret is available as an environment variable when configured in Cursor Secrets.
+
 ### Gotchas
 
-- **NVD API key required**: CVE generation needs a valid NVD API key (free, request at https://nvd.nist.gov/developers/request-an-api-key). Without it, SBOM/CDX generation still works but NVD queries will fail with 403/404.
+- **NVD API key required**: CVE generation needs a valid NVD API key (free, request at https://nvd.nist.gov/developers/request-an-api-key). Without it, SBOM/CDX generation still works but NVD queries will fail with 403/404. The key is available as `$NVD_API_KEY` when set in Cursor Secrets.
+- **`uswid --fixup` crashes on CDX files without `source_dir`**: The pinned `uswid` version has a bug where `--fixup` fails with `TypeError: object of type 'NoneType' has no len()` on components lacking a `source_dir`. The codebase works around this via `sanitize_cdx_file()` in `edk2_json_generator.py`. When using `uswid` directly, omit `--fixup` for manually-created CDX files, or pre-sanitize them.
 - **`edk2_json_generator.py` cannot be imported as a module** because `argparse` runs at module level (outside `if __name__ == '__main__'`).
 - **`get_cve_response.py` has a hardcoded empty API key and hardcoded input file** (`edk.cdx.json`). Edit before running.
 - **No test suite exists** — there are no unit/integration tests, no pytest configuration, and no linter config in this repo.
