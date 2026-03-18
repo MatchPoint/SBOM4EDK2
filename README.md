@@ -20,6 +20,16 @@ Tool to generate a Software Bill of Materials (SBOM) from TianoCore EDK II sourc
    pip install -r requirements.txt
    ```
 4. Request a free NVD API key: https://nvd.nist.gov/developers/request-an-api-key
+5. Copy the example environment file and add your API key:
+   ```bash
+   cp .env.example .env
+   ```
+   Then edit `.env` and replace the placeholder with your actual key:
+   ```
+   NVD_API_KEY=your_actual_api_key_here
+   ```
+
+   All three scripts read `NVD_API_KEY` from the `.env` file automatically. You can also pass the key via the `-k` flag on the command line, which takes precedence over the `.env` file.
 
    The API key is required for CVE generation. Without a valid key, SBOM/CDX files are still generated but NVD queries will fail.
 
@@ -36,17 +46,21 @@ The script will automatically:
 - Query the NVD API for CVEs matching each SBOM component
 
 ```bash
-python main.py -o <output_name> -k <nvd_api_key> -r <edk2_repo_url>
+python main.py -o <output_name> -r <edk2_repo_url>
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-o`, `--output` | Output CDX filename (without extension). Also used as the clone directory name. |
-| `-k`, `--apikey` | Your NVD API key |
 | `-r`, `--repo` | Git URL of the EDK2 repository to clone |
+| `-k`, `--apikey` | *(Optional)* NVD API key — overrides `NVD_API_KEY` from `.env` |
 
 **Example:**
 ```bash
+# Using API key from .env file
+python main.py -o "edk2" -r "https://github.com/tianocore/edk2.git"
+
+# Or passing the API key directly
 python main.py -o "edk2" -k "ABC-1234-qwer-5678" -r "https://github.com/tianocore/edk2.git"
 ```
 
@@ -64,20 +78,27 @@ python main.py -o "edk2" -k "ABC-1234-qwer-5678" -r "https://github.com/tianocor
 Use `edk2_json_generator.py` when you already have the EDK2 source code checked out on your local system. This script processes each `.inf` file individually, merges the resulting CDX files, and then runs CVE analysis.
 
 ```bash
-python edk2_json_generator.py -l <edk2_local_path> -n <output_name> -k <nvd_api_key> [options]
+python edk2_json_generator.py -l <edk2_local_path> -n <output_name> [options]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-l`, `--location` | Path to the local EDK2 source tree to scan |
 | `-n`, `--jsonname` | Name of the final CDX JSON file (without extension) |
-| `-k`, `--apikey` | Your NVD API key |
+| `-k`, `--apikey` | *(Optional)* NVD API key — overrides `NVD_API_KEY` from `.env` |
 | `--uswid-data` | *(Optional)* Path to a local [uswid-data](https://github.com/hughsie/uswid-data.git) clone for fallback metadata |
 | `--parent-yaml` | *(Optional)* Path to a parent component YAML file to include in the merge |
 | `--max-workers` | *(Optional)* Number of concurrent threads for `.inf` processing (default: 12) |
 
 **Example:**
 ```bash
+# Using API key from .env file
+python edk2_json_generator.py \
+  -l "/path/to/edk2" \
+  -n "edk2" \
+  --uswid-data "/path/to/uswid-data"
+
+# Or passing the API key directly
 python edk2_json_generator.py \
   -l "/path/to/edk2" \
   -n "edk2" \
@@ -108,27 +129,22 @@ python edk2_json_generator.py \
 
 Use `get_cve_response.py` when you already have an SBOM (`.cdx.json`) from a previous run and only need to generate or refresh the CVE report.
 
-Before running, edit the following values at the bottom of `get_cve_response.py`:
-
-1. **API key** — set your NVD API key in the `headers` dict inside `nvd_cpe_pattern_search()`:
-   ```python
-   headers = {
-       'apiKey': 'YOUR_NVD_API_KEY_HERE'
-   }
-   ```
-2. **Input file** — change the filename in the `generate_cves()` call at the end of the file to point to your SBOM:
-   ```python
-   generate_cves('your_file.cdx.json')
-   ```
-
-Then run:
 ```bash
-python get_cve_response.py
+python get_cve_response.py <cdx_file>
 ```
 
-**Example** (after editing the file to use `edk2.cdx.json` and your API key):
+| Argument / Flag | Description |
+|-----------------|-------------|
+| `cdx_file` | Path to the CycloneDX SBOM (`.cdx.json`) file |
+| `-k`, `--apikey` | *(Optional)* NVD API key — overrides `NVD_API_KEY` from `.env` |
+
+**Example:**
 ```bash
-python get_cve_response.py
+# Using API key from .env file
+python get_cve_response.py edk2.cdx.json
+
+# Or passing the API key directly
+python get_cve_response.py edk2.cdx.json -k "ABC-1234-qwer-5678"
 ```
 
 **Outputs:**
