@@ -1,0 +1,85 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:3ad17d97-6153-41a1-96f6-f1fa1b495a01",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-03-18T15:49:01.465026+00:00",
+    "tools": [
+      {
+        "vendor": "uSWID Authors",
+        "name": "uSWID",
+        "version": "0.4.0"
+      }
+    ],
+    "lifecycles": [
+      {
+        "phase": "pre-build"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "firmware",
+      "name": "HelloWorldFirmware",
+      "version": "1.0.0",
+      "bom-ref": "53fda5a1-d359-4b09-a4be-91b3df8fdb1e"
+    },
+    {
+      "type": "library",
+      "name": "openssl",
+      "version": "1.1.1k",
+      "bom-ref": "c8c09a80-cb1e-44f9-893a-2dc62eef158c",
+      "licenses": [
+        {
+          "license": {
+            "url": "https://spdx.org/licenses/Apache-2.0.html",
+            "id": "Apache-2.0"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "zlib",
+      "version": "1.2.11",
+      "bom-ref": "707eb88e-1771-4a31-93e3-b70acbf98df8",
+      "licenses": [
+        {
+          "license": {
+            "url": "https://spdx.org/licenses/Zlib.html",
+            "id": "Zlib"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "curl",
+      "version": "7.79.1",
+      "bom-ref": "ff64f06d-843f-4ff3-9339-4fc8f46f76ae",
+      "licenses": [
+        {
+          "license": {
+            "url": "https://spdx.org/licenses/MIT.html",
+            "id": "MIT"
+          }
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sqlite",
+      "version": "3.36.0",
+      "bom-ref": "d4a2f49b-15df-4a47-b0c2-c5435d48f3b8",
+      "licenses": [
+        {
+          "license": {
+            "url": "https://spdx.org/licenses/blessing.html",
+            "id": "blessing"
+          }
+        }
+      ]
+    }
+  ]
+}
