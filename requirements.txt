@@ -8,9 +8,6 @@ requests>=2.32.0
 # Do NOT replace this with the upstream package from PyPI (pip install uswid)
 # or from https://github.com/hughsie/python-uswid.
 #
-# Development (local editable install — live code, no reinstall needed):
-uswid @ file:///mnt/c/Users/gt164/repos/python-uswid-sbom
-#
-# Production / CI (pin to a specific commit on the remote fork):
-#   uswid @ git+https://github.com/MatchPoint/python-uswid-sbom.git@<commit>
-# then: pip install -r requirements.txt
+# To switch to a local editable install (development):
+#   pip install -e /path/to/python-uswid-sbom
+uswid @ git+https://github.com/MatchPoint/python-uswid-sbom.git@f45654f0c0229b231a97a19c2377c2992191610e
