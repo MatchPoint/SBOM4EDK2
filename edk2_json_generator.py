@@ -16,8 +16,10 @@ from sbom4edk2.ghsa import scan_sbom_with_ghsa
 from sbom4edk2.grype import is_grype_available, scan_sbom_with_grype
 from sbom4edk2.sbom import (
     find_inf_files,
+    generate_sbom_from_checkout,
     list_cdx_files,
     merge_cdx_files,
+    process_inf_file,
     run_command,
     sanitize_cdx_file,
 )

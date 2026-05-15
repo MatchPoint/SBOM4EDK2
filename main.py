@@ -4,7 +4,6 @@
 import argparse
 import logging
 import os
-import subprocess
 import sys
 import time
 
@@ -14,6 +13,7 @@ from sbom4edk2.cve_analyzer import generate_cve_report
 from sbom4edk2.ghsa import scan_sbom_with_ghsa
 from sbom4edk2.git_utils import clone_or_update
 from sbom4edk2.grype import is_grype_available, scan_sbom_with_grype
+from sbom4edk2.sbom import generate_sbom_from_checkout
 
 load_dotenv()
 
@@ -83,17 +83,15 @@ def main() -> None:
     clone_or_update(USWID_DATA_REPO, USWID_DATA_DIR)
     clone_or_update(args.repo, args.output, init_submodules=True)
 
-    cdx_file = f"{args.output}.cdx.json"
-    logger.info("Running uswid to generate SBOM...")
-    result = subprocess.run(
-        ["uswid", "--verbose", "--find", args.output,
-         "--fallback-path", USWID_DATA_DIR,
-         "--sbom-type", args.sbom_type,
-         "--save", cdx_file],
-        check=False,
+    logger.info("Generating SBOM from EDK2 .inf files...")
+    cdx_file = generate_sbom_from_checkout(
+        location=args.output,
+        output_name=args.output,
+        uswid_data=USWID_DATA_DIR if os.path.isdir(USWID_DATA_DIR) else None,
+        sbom_type=args.sbom_type,
     )
-    if result.returncode != 0 or not os.path.exists(cdx_file):
-        logger.error("uswid failed to generate %s", cdx_file)
+    if not cdx_file:
+        logger.error("SBOM generation failed")
         sys.exit(1)
     logger.info("SBOM generated: %s", cdx_file)
 
