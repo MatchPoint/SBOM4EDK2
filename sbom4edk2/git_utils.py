@@ -16,16 +16,16 @@ def clone_or_update(repo_url: str, dest: str, *, init_submodules: bool = False) 
     import os, sys
 
     if os.path.exists(dest):
-        logger.info("Pulling latest changes in %s …", dest)
+        logger.info("Pulling latest changes in %s...", dest)
         _git(["git", "pull"], cwd=dest)
         if init_submodules:
-            logger.info("Updating submodules in %s …", dest)
+            logger.info("Updating submodules in %s...", dest)
             _git(["git", "submodule", "update", "--init", "--recursive"], cwd=dest)
     else:
-        logger.info("Cloning %s → %s …", repo_url, dest)
+        logger.info("Cloning %s -> %s...", repo_url, dest)
         _git(["git", "clone", repo_url, dest])
         if init_submodules:
-            logger.info("Initialising submodules in %s …", dest)
+            logger.info("Initialising submodules in %s...", dest)
             _git(["git", "submodule", "update", "--init", "--recursive"], cwd=dest)
 
 

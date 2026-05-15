@@ -84,7 +84,7 @@ def main() -> None:
     clone_or_update(args.repo, args.output, init_submodules=True)
 
     cdx_file = f"{args.output}.cdx.json"
-    logger.info("Running uswid to generate SBOM …")
+    logger.info("Running uswid to generate SBOM...")
     result = subprocess.run(
         ["uswid", "--verbose", "--find", args.output,
          "--fallback-path", USWID_DATA_DIR,
