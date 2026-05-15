@@ -213,10 +213,38 @@ def generate_sbom_from_checkout(
     import threading
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    # #region agent log 2135d7
+    import json as _json, time as _time
+    _dbg = {"sessionId": "2135d7", "runId": "post-fix", "hypothesisId": "A+C",
+            "location": "sbom.py:generate_sbom_from_checkout",
+            "message": "generate_sbom_from_checkout called",
+            "data": {"location": location, "output_name": output_name,
+                     "sbom_type": sbom_type, "uswid_data": uswid_data},
+            "timestamp": int(_time.time() * 1000)}
+    try:
+        with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_dbg) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
     inf_files = find_inf_files(location)
     if not inf_files:
         logger.warning("No .inf files found in %s", location)
         return None
+
+    # #region agent log 2135d7
+    _dbg2 = {"sessionId": "2135d7", "runId": "post-fix", "hypothesisId": "A",
+             "location": "sbom.py:generate_sbom_from_checkout",
+             "message": "inf_files count",
+             "data": {"count": len(inf_files), "first_5": inf_files[:5]},
+             "timestamp": int(_time.time() * 1000)}
+    try:
+        with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_dbg2) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
     cdx_output = os.path.join(os.getcwd(), "cdx_json_output")
     os.makedirs(cdx_output, exist_ok=True)
@@ -263,6 +291,21 @@ def generate_sbom_from_checkout(
     if rc != 0:
         logger.error("CDX merge failed (rc=%d)", rc)
         return None
+
+    # #region agent log 2135d7
+    import json as _json, time as _time
+    _dbg3 = {"sessionId": "2135d7", "runId": "post-fix", "hypothesisId": "A+C",
+             "location": "sbom.py:generate_sbom_from_checkout",
+             "message": "SBOM merge complete",
+             "data": {"output_path": output_path,
+                      "exists": os.path.exists(output_path)},
+             "timestamp": int(_time.time() * 1000)}
+    try:
+        with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(_dbg3) + "\n")
+    except Exception:
+        pass
+    # #endregion
 
     return output_path
 
