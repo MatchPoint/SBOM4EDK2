@@ -193,6 +193,177 @@ def process_inf_file(
     return True, None
 
 
+def _get_edk2_version(location: str) -> str:
+    """Extract the EDK2 release version string from the git checkout at *location*.
+
+    Returns a string like ``"202602"`` (YYYYMM from the ``edk2-stable<YYYYMM>`` tag)
+    or ``"unknown"`` when the tag cannot be determined.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--match", "edk2-stable*", "--abbrev=0"],
+            cwd=location,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode == 0:
+            tag = result.stdout.strip()          # e.g. "edk2-stable202602"
+            return tag.replace("edk2-stable", "")
+    except Exception:
+        pass
+    return "unknown"
+
+
+def _merge_inf_cdx_direct(
+    inf_cdx_files: list[str],
+    output_path: str,
+    *,
+    location: str = "",
+    fallback_path: Optional[str] = None,
+    sbom_type: str = "source",
+) -> int:
+    """Build a merged CycloneDX SBOM from per-.inf CDX files + uswid-data.
+
+    The ``uswid --load`` merge approach silently overwrites each loaded
+    ``metadata.component`` with the next, leaving only the last component in
+    the output.  This function works around the limitation by doing a direct
+    JSON merge:
+
+    1.  The EDK2 primary component is taken from
+        ``<fallback_path>/edk2.cdx.json`` ``components[0]`` (if present).
+    2.  OSS submodule components are collected from all other
+        ``<fallback_path>/*.cdx.json`` files.
+    3.  Each per-``.inf`` component is extracted from its CDX
+        ``metadata.component``.
+    4.  All components are placed in the ``components[]`` array.
+    5.  ``@VCS_*`` placeholders in the primary component are resolved via
+        git in *location*.
+    """
+    import uuid
+    import re
+    from datetime import datetime, timezone
+
+    phase_map = {"source": "pre-build", "build": "build", "binary": "post-build"}
+    phase = phase_map.get(sbom_type, "pre-build")
+
+    # --- primary component (EDK2) from uswid-data/edk2.cdx.json ---
+    primary: dict = {
+        "type": "firmware",
+        "bom-ref": "tianocore:edk2",
+        "name": "EDK II",
+        "version": "unknown",
+        "supplier": {"name": "TianoCore"},
+        "licenses": [{"license": {"id": "BSD-2-Clause"}}],
+    }
+    if fallback_path:
+        edk2_cdx = os.path.join(fallback_path, "edk2.cdx.json")
+        if os.path.isfile(edk2_cdx):
+            try:
+                fd = json.load(open(edk2_cdx, encoding="utf-8"))
+                candidates = fd.get("components", []) or [fd.get("metadata", {}).get("component", {})]
+                if candidates and candidates[0]:
+                    primary = dict(candidates[0])
+                    logger.info("EDK2 primary component loaded from %s", edk2_cdx)
+            except Exception as exc:
+                logger.warning("Could not load EDK2 primary from %s: %s", edk2_cdx, exc)
+
+    # Resolve @VCS_* placeholders
+    edk2_ver = _get_edk2_version(location) if location else "unknown"
+    logger.info("EDK2 version: %s", edk2_ver)
+
+    def _subst(val: str) -> str:
+        val = re.sub(r"@VCS_VERSION@", edk2_ver, val)
+        val = re.sub(r"@VCS_TAG@", f"edk2-stable{edk2_ver}", val)
+        val = re.sub(r"@VCS_AUTHORS@", "TianoCore contributors", val)
+        return val
+
+    def _subst_recursive(obj):
+        if isinstance(obj, str):
+            return _subst(obj)
+        if isinstance(obj, list):
+            return [_subst_recursive(i) for i in obj]
+        if isinstance(obj, dict):
+            return {k: _subst_recursive(v) for k, v in obj.items()}
+        return obj
+
+    primary = _subst_recursive(primary)
+
+    # --- OSS submodule components from other uswid-data CDX files ---
+    submodule_components: list[dict] = []
+    if fallback_path and os.path.isdir(fallback_path):
+        for cdx_file in sorted(os.listdir(fallback_path)):
+            if not cdx_file.endswith(".cdx.json") or cdx_file == "edk2.cdx.json":
+                continue
+            fp = os.path.join(fallback_path, cdx_file)
+            try:
+                fd = json.load(open(fp, encoding="utf-8"))
+                for comp in fd.get("components", []):
+                    if comp:
+                        submodule_components.append(comp)
+                mc = fd.get("metadata", {}).get("component", {})
+                if mc and mc.get("name"):
+                    submodule_components.append(mc)
+            except Exception as exc:
+                logger.warning("Could not load fallback CDX %s: %s", fp, exc)
+        logger.info("Loaded %d submodule components from uswid-data", len(submodule_components))
+
+    # --- per-.inf components ---
+    inf_components: list[dict] = []
+    for cdx_file in inf_cdx_files:
+        try:
+            fd = json.load(open(cdx_file, encoding="utf-8"))
+            mc = fd.get("metadata", {}).get("component", {})
+            if mc and mc.get("name"):
+                inf_components.append(mc)
+        except Exception as exc:
+            logger.warning("Could not load INF CDX %s: %s", cdx_file, exc)
+    logger.info("Loaded %d INF components", len(inf_components))
+
+    # Deduplicate by bom-ref (submodule data takes precedence over INF data)
+    seen_refs: set[str] = set()
+    all_components: list[dict] = []
+    for comp in submodule_components + inf_components:
+        key = comp.get("bom-ref") or comp.get("name", "")
+        if key and key not in seen_refs:
+            seen_refs.add(key)
+            all_components.append(comp)
+
+    # Build the final CDX
+    output_cdx: dict = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "serialNumber": f"urn:uuid:{uuid.uuid4()}",
+        "version": 1,
+        "metadata": {
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "tools": [
+                {
+                    "vendor": "SBOM4EDK2",
+                    "name": "SBOM4EDK2",
+                    "version": "0.0.0+unknown",
+                }
+            ],
+            "lifecycles": [{"phase": phase}],
+            "component": primary,
+        },
+        "components": all_components,
+    }
+
+    try:
+        with open(output_path, "w", encoding="utf-8") as fh:
+            json.dump(output_cdx, fh, indent=2)
+        logger.info(
+            "Direct JSON merge: %d components -> %s",
+            len(all_components),
+            output_path,
+        )
+        return 0
+    except Exception as exc:
+        logger.error("Failed to write merged CDX %s: %s", output_path, exc)
+        return 1
+
+
 def generate_sbom_from_checkout(
     location: str,
     output_name: str,
@@ -281,10 +452,10 @@ def generate_sbom_from_checkout(
         return None
 
     output_path = os.path.join(os.getcwd(), f"{output_name}.cdx.json")
-    rc = merge_cdx_files(
+    rc = _merge_inf_cdx_direct(
         cdx_files,
         output_path,
-        parent_yaml=parent_yaml,
+        location=location,
         fallback_path=uswid_data,
         sbom_type=sbom_type,
     )
@@ -298,7 +469,9 @@ def generate_sbom_from_checkout(
              "location": "sbom.py:generate_sbom_from_checkout",
              "message": "SBOM merge complete",
              "data": {"output_path": output_path,
-                      "exists": os.path.exists(output_path)},
+                      "exists": os.path.exists(output_path),
+                      "component_count": len(_json.load(open(output_path)).get("components", []))
+                        if os.path.exists(output_path) else -1},
              "timestamp": int(_time.time() * 1000)}
     try:
         with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
