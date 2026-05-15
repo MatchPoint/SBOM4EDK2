@@ -42,6 +42,10 @@ def main() -> None:
         "-k", "--apikey", default=None,
         help="NVD API key (overrides NVD_API_KEY from .env)",
     )
+    parser.add_argument(
+        "--sbom-type", default="source", choices=["source", "build", "binary"],
+        help="SBOM lifecycle type per UEFI SBOM Guidelines §3.1.1.3 (default: source)",
+    )
     args = parser.parse_args()
 
     api_key = args.apikey or os.environ.get("NVD_API_KEY")
@@ -56,7 +60,9 @@ def main() -> None:
     logger.info("Running uswid to generate SBOM …")
     result = subprocess.run(
         ["uswid", "--verbose", "--find", args.output,
-         "--fallback-path", USWID_DATA_DIR, "--save", cdx_file],
+         "--fallback-path", USWID_DATA_DIR,
+         "--sbom-type", args.sbom_type,
+         "--save", cdx_file],
         check=False,
     )
     if result.returncode != 0 or not os.path.exists(cdx_file):

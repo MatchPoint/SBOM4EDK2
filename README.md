@@ -2,6 +2,12 @@
 
 Generate a Software Bill of Materials (SBOM) from [TianoCore EDK II](https://github.com/tianocore/edk2) source code and run CVE vulnerability analysis using the [NIST NVD](https://nvd.nist.gov/) API.
 
+> **SBOM engine:** This project uses [python-uswid-sbom](https://github.com/MatchPoint/python-uswid-sbom),
+> a fork of [python-uswid](https://github.com/hughsie/python-uswid) extended with
+> UEFI SBOM Guidelines (CISA Level 1) compliance features including accurate CPE
+> version strings for OSS submodules, CVE-aware pedigree patches, INF→submodule
+> `dependsOn` wiring, and the `--sbom-type` lifecycle flag.
+
 ## Quick Start
 
 ```bash
@@ -51,6 +57,7 @@ python main.py -o <output_name> -r <edk2_repo_url> [-k <api_key>]
 | `-o`, `--output` | Output name (clone directory and CDX filename, without extension) |
 | `-r`, `--repo` | Git URL of the EDK2 repository |
 | `-k`, `--apikey` | *(Optional)* NVD API key — overrides `.env` |
+| `--sbom-type` | *(Optional)* `source` \| `build` \| `binary` — SBOM lifecycle type (default: `source`) |
 
 **Example:**
 ```bash
@@ -75,6 +82,7 @@ python edk2_json_generator.py -l <path> -n <name> [-k <key>] [--uswid-data <path
 | `--uswid-data` | *(Optional)* Path to [uswid-data](https://github.com/hughsie/uswid-data.git) clone |
 | `--parent-yaml` | *(Optional)* Parent component YAML for merge |
 | `--max-workers` | *(Optional)* Thread count for `.inf` processing (default: 12) |
+| `--sbom-type` | *(Optional)* `source` \| `build` \| `binary` — SBOM lifecycle type per UEFI SBOM Guidelines §3.1.1.3 (default: `source`) |
 
 **Example:**
 ```bash
@@ -83,13 +91,9 @@ python edk2_json_generator.py -l /path/to/edk2 -n edk2 --uswid-data /path/to/usw
 
 **Outputs:** `cdx_json_output/` (individual CDX files), `cdx_json_output/<name>.cdx.json` (merged), `CVE_List.xlsx`, `edk2_json_generator_<timestamp>.log`
 
-> **Known issue:** The CDX merge step uses `uswid --fixup`, which may crash with
-> `TypeError: object of type 'NoneType' has no len()` on components that lack a
-> `source_dir` value. If this happens, the individual CDX files in `cdx_json_output/`
-> are still valid and can be used with Scenario 3. Manual merge without `--fixup`:
-> ```bash
-> uswid --load file1.cdx.json --load file2.cdx.json --save merged.cdx.json
-> ```
+> **Note:** The CDX merge step uses `uswid --fixup`. The `python-uswid-sbom`
+> engine defensively sanitises `source-dir` fields before each merge pass to
+> avoid the `NoneType` crash seen in earlier versions of the upstream engine.
 
 ---
 

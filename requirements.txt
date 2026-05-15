@@ -2,4 +2,4 @@ openpyxl>=3.1.5
 pandas>=3.0.1
 python-dotenv>=1.0.0
 requests>=2.32.0
-uswid @ git+https://github.com/hughsie/python-uswid.git@ce25e04642655691698034cc0439e149b74d58d6
+uswid @ git+https://github.com/MatchPoint/python-uswid-sbom.git@90bc8902c3a608246d3d30e8b40aea723791f455
