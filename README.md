@@ -2,11 +2,13 @@
 
 Generate a Software Bill of Materials (SBOM) from [TianoCore EDK II](https://github.com/tianocore/edk2) source code and run CVE vulnerability analysis via the [NIST NVD](https://nvd.nist.gov/) API, [Grype](https://github.com/anchore/grype), and TianoCore GitHub Security Advisories (GHSA).
 
-> **SBOM engine:** This project uses [python-uswid-sbom](https://github.com/MatchPoint/python-uswid-sbom),
-> a fork of [python-uswid](https://github.com/hughsie/python-uswid) extended with
-> UEFI SBOM Guidelines (CISA Level 1) compliance features including accurate CPE
-> version strings for OSS submodules, CVE-aware pedigree patches, INF→submodule
-> `dependsOn` wiring, and the `--sbom-type` lifecycle flag.
+> **SBOM engine:** Per-`.inf` parsing uses
+> [python-uswid-sbom](https://github.com/MatchPoint/python-uswid-sbom), a fork of
+> [python-uswid](https://github.com/hughsie/python-uswid) extended with UEFI SBOM
+> Guidelines (CISA Level 1) compliance features.  Top-level assembly — recursive
+> `.gitmodules` walk, per-submodule version resolution via `git describe`,
+> CycloneDX `dependencies[]` tree, and the `--sbom-type` lifecycle flag — is
+> implemented directly in `sbom4edk2/sbom.py` (`_merge_inf_cdx_direct`).
 
 ## Quick Start
 
@@ -35,7 +37,7 @@ sbom4edk2/              Shared library
   cpe.py                CPE pattern construction and name normalisation
   cve_analyzer.py       Concurrent CVE analysis and Excel report generation
   grype.py              Grype-based SBOM scanner (no API key required)
-  sbom.py               CycloneDX SBOM parsing, CDX merge, uswid helpers
+  sbom.py               CycloneDX parsing, INF-driven SBOM assembly, per-submodule VCS resolution, dependency tree
   git_utils.py          Git clone/pull operations
 
 main.py                 Scenario 1 — clone repo + generate SBOM + CVE list
@@ -85,10 +87,17 @@ python get_cve_response.py edk2.cdx.json --scanner both -k <your_key>
 grype is faster and requires no registration.  For production pipelines where
 you want authoritative NVD output and already have a key, use `--scanner nvd`.
 
-> **Note on CPE accuracy:** `cpe.py` uses the explicit `cpe` field from the
-> SBOM when available (set by `python-uswid-sbom` from NVD-verified data)
-> rather than constructing a wildcard pattern, significantly improving match
-> rates for submodules like `mbedtls`, `brotli`, and `oniguruma`.
+> **Note on CPE accuracy:** `cpe.py` uses the explicit `cpe` field already
+> present on the component when available rather than constructing a wildcard
+> pattern.  Those CPE strings get accurate version numbers at SBOM-build time:
+> `_merge_inf_cdx_direct` walks the EDK2 `.gitmodules` tree (including nested
+> submodules under `openssl/`), runs `git describe` in each submodule clone,
+> normalises the result to an NVD-matchable form (strips `v`/`V`, project-name,
+> and `+suffix` prefixes), and substitutes `@VCS_TAG@`/`@VCS_VERSION@` per
+> component.  A small URL alias map handles org renames
+> (`Mbed-TLS`↔`ARMmbed`, `dgibson/dtc`↔`devicetree-org/pylibfdt`).  Components
+> whose VCS URL doesn't match any EDK2 submodule are dropped to avoid emitting
+> unsubstituted placeholders.
 
 ### Installing grype
 
@@ -127,6 +136,24 @@ python get_cve_response.py edk2.cdx.json --no-ghsa
 | `CVE_List.xlsx` | NVD REST API | Produced when `--scanner nvd` or `both` |
 | `CVE_List_grype_<name>.xlsx` | Grype local DB | Produced when `--scanner grype`, `both`, or `auto` (no key) |
 | `CVE_List_ghsa_<name>.xlsx` | TianoCore GHSA | Always produced (use `--no-ghsa` to skip) |
+
+## SBOM structure
+
+The generated `<name>.cdx.json` is a CycloneDX 1.6 document with:
+
+- `metadata.component` — the EDK2 firmware itself (supplier `TianoCore`,
+  version e.g. `202602`, CPE `cpe:2.3:a:tianocore:edk2:edk2-stable202602:*:...`).
+- `components[]` — one entry per parsed `.inf` plus one per matched OSS
+  submodule from the recursive `.gitmodules` walk.
+- `dependencies[]` — captures the nested submodule structure as
+  `ref`/`dependsOn` edges.  For example: the EDK2 primary depends on
+  `openssl`, `libspdm`, `mbedtls`, …; `openssl` in turn depends on
+  `quiche`, `gost-engine`, `oqs-provider`, `pkcs11-provider`, `krb5`, …;
+  `gost-engine` depends on `libprov`; `libspdm` depends on `cmocka`.
+
+This containment tree lets SBOM consumers see which dependency chain a
+particular CVE applies to (e.g. a `cloudflare/quiche` CVE is reachable
+because openssl pulls quiche in).
 
 ---
 
