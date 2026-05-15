@@ -443,21 +443,6 @@ def _merge_inf_cdx_direct(
         # devicetree-org/pylibfdt mirror.
         "https://github.com/dgibson/dtc": "https://github.com/devicetree-org/pylibfdt",
     }
-    # #region agent log 2135d7
-    try:
-        with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
-            _f.write(json.dumps({
-                "sessionId": "2135d7", "runId": "run1", "hypothesisId": "H2",
-                "location": "sbom.py:_merge_inf_cdx_direct",
-                "message": "parsed gitmodules",
-                "data": {"edk2_dir": location, "url_count": len(url_to_path),
-                         "sample": dict(list(url_to_path.items())[:3])},
-                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-            }) + "\n")
-    except Exception:
-        pass
-    # #endregion
-
     def _vcs_url_of(comp: dict) -> str:
         """Extract the canonical lowercase VCS URL of a CDX component."""
         for ref in comp.get("externalReferences", []) or []:
@@ -532,22 +517,6 @@ def _merge_inf_cdx_direct(
             "Loaded %d submodule components (resolved VCS: %d, unresolved: %d)",
             len(submodule_components), resolved_count, unresolved_count,
         )
-        # #region agent log 2135d7
-        try:
-            with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
-                _f.write(json.dumps({
-                    "sessionId": "2135d7", "runId": "run1", "hypothesisId": "H1+H3",
-                    "location": "sbom.py:_merge_inf_cdx_direct",
-                    "message": "submodule VCS resolution complete",
-                    "data": {"total": len(submodule_components),
-                             "resolved": resolved_count,
-                             "unresolved": unresolved_count},
-                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-                }) + "\n")
-        except Exception:
-            pass
-        # #endregion
-
     # --- per-.inf components ---
     inf_components: list[dict] = []
     for cdx_file in inf_cdx_files:
@@ -581,21 +550,6 @@ def _merge_inf_cdx_direct(
         path_to_ref = {p: r for p, r in resolved_paths}
         deps_map: dict = {}
 
-        # #region agent log 2135d7
-        try:
-            with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
-                _f.write(json.dumps({
-                    "sessionId": "2135d7", "runId": "run1", "hypothesisId": "H1+H4",
-                    "location": "sbom.py:_merge_inf_cdx_direct",
-                    "message": "resolved_paths dump",
-                    "data": {"count": len(resolved_paths),
-                             "items": [(p, r) for p, r in resolved_paths]},
-                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-                }) + "\n")
-        except Exception:
-            pass
-        # #endregion
-
         for path, ref in resolved_paths:
             ancestors = [
                 p for p in all_paths
@@ -615,22 +569,6 @@ def _merge_inf_cdx_direct(
                 "ref": ref,
                 "dependsOn": sorted(set(children)),
             })
-
-        # #region agent log 2135d7
-        try:
-            with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
-                _f.write(json.dumps({
-                    "sessionId": "2135d7", "runId": "run1", "hypothesisId": "H1+H4",
-                    "location": "sbom.py:_merge_inf_cdx_direct",
-                    "message": "dependencies tree built",
-                    "data": {"resolved_paths": len(resolved_paths),
-                             "dep_groups": len(dependencies),
-                             "primary_children": len(deps_map.get(primary_ref, []))},
-                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
-                }) + "\n")
-        except Exception:
-            pass
-        # #endregion
 
     # Build the final CDX
     output_cdx: dict = {
