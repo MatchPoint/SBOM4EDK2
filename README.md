@@ -181,11 +181,7 @@ python edk2_json_generator.py -l <path> -n <name> [-k <key>] [--uswid-data <path
 python edk2_json_generator.py -l /path/to/edk2 -n edk2 --uswid-data /path/to/uswid-data
 ```
 
-**Outputs:** `cdx_json_output/` (individual CDX files), `cdx_json_output/<name>.cdx.json` (merged), `CVE_List.xlsx`, `edk2_json_generator_<timestamp>.log`
-
-> **Note:** The CDX merge step uses `uswid --fixup`. The `python-uswid-sbom`
-> engine defensively sanitises `source-dir` fields before each merge pass to
-> avoid the `NoneType` crash seen in earlier versions of the upstream engine.
+**Outputs:** `cdx_json_output/` (individual per-`.inf` CDX files), `cdx_json_output/<name>.cdx.json` (merged SBOM), `CVE_List.xlsx`, `edk2_json_generator_<timestamp>.log`
 
 ---
 

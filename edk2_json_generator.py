@@ -15,6 +15,7 @@ from sbom4edk2.cve_analyzer import generate_cve_report
 from sbom4edk2.ghsa import scan_sbom_with_ghsa
 from sbom4edk2.grype import is_grype_available, scan_sbom_with_grype
 from sbom4edk2.sbom import (
+    _merge_inf_cdx_direct,
     find_inf_files,
     generate_sbom_from_checkout,
     list_cdx_files,
@@ -163,9 +164,10 @@ def main() -> None:
         logger.error("No CDX files to merge")
         sys.exit(2)
 
-    rc = merge_cdx_files(
-        cdx_files, final_cdx,
-        parent_yaml=args.parent_yaml,
+    rc = _merge_inf_cdx_direct(
+        cdx_files,
+        final_cdx,
+        location=location,
         fallback_path=args.uswid_data,
         sbom_type=args.sbom_type,
     )

@@ -23,6 +23,6 @@ python get_cve_response.py <cdx_file>               # Scenario 3
 
 ### Gotchas
 
-- **`uswid --fixup` crash**: The pinned uswid version crashes on `None` `source_dir` values. `sbom4edk2/sbom.py:sanitize_cdx_file()` patches CDX JSON before merge, but uswid's internal sort may still fail. Omit `--fixup` for manually-created CDX files.
+- **CDX merge**: The SBOM merge step uses a direct Python JSON merge (`sbom4edk2/sbom.py:_merge_inf_cdx_direct`) rather than `uswid --load`, because `uswid --load` silently overwrites `metadata.component` on each file loaded, leaving only the last component in the output. Do not revert to `uswid --load` for the merge step.
 - **Test suite**: `tests/test_sbom4edk2.py` contains 64 unit tests covering `cpe`, `ghsa`, `grype`, `sbom`, and `cve_analyzer` modules. Run with `python -m pytest tests/`.
 - **Full runs are slow**: `main.py` clones the EDK2 repo (several GB with submodules) and makes many NVD API calls.
