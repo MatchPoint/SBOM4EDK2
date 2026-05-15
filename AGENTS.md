@@ -4,11 +4,11 @@
 
 ### Overview
 
-SBOM4EDK2 is a Python CLI tool that generates SBOMs from TianoCore EDK2 firmware source code and runs CVE analysis via the NIST NVD API. Shared logic lives in the `sbom4edk2/` package; three thin CLI scripts provide the entry points. See `README.md` for usage.
+SBOM4EDK2 is a Python CLI tool that generates SBOMs from TianoCore EDK2 firmware source code and runs CVE analysis via three complementary sources: the NIST NVD API, Grype (local DB, no key required), and TianoCore GitHub Security Advisories (GHSA, always included). Shared logic lives in the `sbom4edk2/` package; three thin CLI scripts provide the entry points. See `README.md` for usage.
 
 ### Environment setup
 
-- Python 3.12+ with a virtual environment at `/workspace/venv`.
+- Python 3.11+ with a virtual environment at `/workspace/venv`.
 - Activate: `source /workspace/venv/bin/activate`
 - Dependencies: `pip install -r requirements.txt` (includes `uswid` from a pinned git commit).
 - NVD API key (optional): set `NVD_API_KEY` in `.env` or pass `-k` on the CLI. Without it, the default `--scanner auto` mode falls back to grype automatically — NVD queries are not attempted and no error is raised.

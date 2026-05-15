@@ -1,6 +1,6 @@
 # SBOM4EDK2
 
-Generate a Software Bill of Materials (SBOM) from [TianoCore EDK II](https://github.com/tianocore/edk2) source code and run CVE vulnerability analysis using the [NIST NVD](https://nvd.nist.gov/) API.
+Generate a Software Bill of Materials (SBOM) from [TianoCore EDK II](https://github.com/tianocore/edk2) source code and run CVE vulnerability analysis via the [NIST NVD](https://nvd.nist.gov/) API, [Grype](https://github.com/anchore/grype), and TianoCore GitHub Security Advisories (GHSA).
 
 > **SBOM engine:** This project uses [python-uswid-sbom](https://github.com/MatchPoint/python-uswid-sbom),
 > a fork of [python-uswid](https://github.com/hughsie/python-uswid) extended with
