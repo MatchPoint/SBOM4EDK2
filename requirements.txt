@@ -10,4 +10,4 @@ requests>=2.32.0
 #
 # To switch to a local editable install (development):
 #   pip install -e /path/to/python-uswid-sbom
-uswid @ git+https://github.com/MatchPoint/python-uswid-sbom.git@f45654f0c0229b231a97a19c2377c2992191610e
+uswid @ git+https://github.com/MatchPoint/python-uswid-sbom.git@902ca45
