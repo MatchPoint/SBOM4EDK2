@@ -193,6 +193,140 @@ def process_inf_file(
     return True, None
 
 
+_CVE_RE_FALLBACK = None  # placeholder if needed
+
+
+def _parse_edk2_gitmodules(edk2_dir: str) -> dict:
+    """Recursively parse ``.gitmodules`` files under *edk2_dir*.
+
+    Returns ``{normalized_url: abspath}`` covering both top-level submodules
+    *and* nested submodules (e.g. quiche, gost-engine under
+    ``CryptoPkg/Library/OpensslLib/openssl/``).
+
+    Normalization: lowercase, strip trailing ``.git``, strip trailing ``/``.
+    This allows matching against ``externalReferences[type=vcs].url`` strings
+    in the uswid-data CDX files which lack the ``.git`` suffix.
+    """
+    result: dict = {}
+    if not os.path.isdir(edk2_dir):
+        return result
+
+    def _emit(parent_dir: str, current: dict) -> None:
+        if current.get("path") and current.get("url"):
+            url = current["url"].rstrip("/")
+            if url.endswith(".git"):
+                url = url[:-4]
+            abs_path = os.path.join(parent_dir, current["path"])
+            key = url.lower()
+            # When the same URL is referenced both at top-level and nested,
+            # prefer the top-level (shortest absolute path) submodule, which
+            # is the version EDK2 actually links against.
+            existing = result.get(key)
+            if existing is None or len(abs_path) < len(existing):
+                result[key] = abs_path
+
+    for root, dirs, files in os.walk(edk2_dir):
+        # Skip .git internals — only project files
+        if ".git" in dirs:
+            dirs.remove(".git")
+        if ".gitmodules" not in files:
+            continue
+        gm = os.path.join(root, ".gitmodules")
+        current: dict = {}
+        try:
+            with open(gm, "r", encoding="utf-8", errors="ignore") as fh:
+                for raw in fh:
+                    line = raw.strip()
+                    if line.startswith("[submodule"):
+                        _emit(root, current)
+                        current = {}
+                    elif "=" in line:
+                        k, _sep, v = line.partition("=")
+                        current[k.strip()] = v.strip()
+            _emit(root, current)
+        except OSError as exc:
+            logger.warning("Could not read %s: %s", gm, exc)
+    return result
+
+
+def _normalize_submodule_version(raw: str) -> tuple:
+    """Normalize a ``git describe --tags --always`` output to NVD-matchable form.
+
+    Returns ``(clean_version, patch_count, commit_sha, base_tag)``.
+
+    Examples (per workspace rules table):
+        ``openssl-3.5.1`` -> ``("3.5.1", 0, None, "openssl-3.5.1")``
+        ``v3.6.5`` -> ``("3.6.5", 0, None, "v3.6.5")``
+        ``v1.2.0-1-ge230f47`` -> ``("1.2.0", 1, "e230f47", "v1.2.0")``
+        ``release-1.11.0-238-g86add134`` -> ``("1.11.0", 238, "86add134", "release-1.11.0")``
+        ``cmocka-1.1.5-23-g1cc9cde`` -> ``("1.1.5", 23, "1cc9cde", "cmocka-1.1.5")``
+        ``V184`` -> ``("184", 0, None, "V184")``
+        ``v1.1+edk2`` -> ``("1.1", 0, None, "v1.1+edk2")``
+        ``83d4e1e`` (bare commit) -> ``("0.0.0", 0, "83d4e1e", None)``
+    """
+    import re as _re
+    raw = (raw or "").strip()
+    if not raw:
+        return ("0.0.0", 0, None, None)
+
+    # Bare commit hash with no release ancestor (e.g., "83d4e1e")
+    if _re.match(r"^[0-9a-f]{7,40}$", raw):
+        return ("0.0.0", 0, raw, None)
+
+    # Pattern: <base>-<patch_count>-g<sha>
+    m = _re.match(r"^(?P<base>.+?)-(?P<n>\d+)-g(?P<sha>[0-9a-f]{7,40})$", raw)
+    if m:
+        base_tag = m.group("base")
+        patch_count = int(m.group("n"))
+        commit_sha = m.group("sha")
+    else:
+        base_tag = raw
+        patch_count = 0
+        commit_sha = None
+
+    # Strip project-name prefix like "openssl-", "cmocka-", "release-"
+    cleaned = base_tag
+    pm = _re.match(r"^[A-Za-z][A-Za-z_\-]*-(?P<v>\d.*)$", cleaned)
+    if pm:
+        cleaned = pm.group("v")
+    # Strip 'v'/'V' prefix
+    if cleaned and cleaned[0] in "vV" and len(cleaned) > 1 and cleaned[1].isdigit():
+        cleaned = cleaned[1:]
+    # Strip project-specific suffix like '+edk2'
+    cleaned = _re.sub(r"\+[A-Za-z0-9._-]+$", "", cleaned)
+
+    # If still not version-shaped, it's likely a bare commit
+    if not _re.match(r"^\d", cleaned):
+        if _re.match(r"^[0-9a-f]{7,40}$", base_tag):
+            return ("0.0.0", 0, base_tag, None)
+        cleaned = "0.0.0"
+
+    return (cleaned, patch_count, commit_sha, base_tag)
+
+
+def _resolve_submodule_vcs(submodule_dir: str) -> tuple:
+    """Run ``git describe`` in *submodule_dir* and return the normalized info.
+
+    Returns ``(clean_version, raw_version, base_tag, commit_sha, patch_count)``.
+    Returns ``("NOASSERTION", "", None, None, 0)`` if not a git checkout.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "describe", "--tags", "--always"],
+            cwd=submodule_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if r.returncode != 0:
+            return ("NOASSERTION", "", None, None, 0)
+        raw = r.stdout.strip()
+        clean, patch_count, commit_sha, base_tag = _normalize_submodule_version(raw)
+        return (clean, raw, base_tag, commit_sha, patch_count)
+    except Exception:
+        return ("NOASSERTION", "", None, None, 0)
+
+
 def _get_edk2_version(location: str) -> str:
     """Extract the EDK2 release version string from the git checkout at *location*.
 
@@ -241,7 +375,6 @@ def _merge_inf_cdx_direct(
         git in *location*.
     """
     import uuid
-    import re
     from datetime import datetime, timezone
 
     phase_map = {"source": "pre-build", "build": "build", "binary": "post-build"}
@@ -264,33 +397,80 @@ def _merge_inf_cdx_direct(
                 candidates = fd.get("components", []) or [fd.get("metadata", {}).get("component", {})]
                 if candidates and candidates[0]:
                     primary = dict(candidates[0])
+                    # Per workspace rules: match NVD CPE dictionary vendor "tianocore".
+                    primary["supplier"] = {
+                        "name": "TianoCore",
+                        "url": ["https://www.tianocore.org/"],
+                    }
                     logger.info("EDK2 primary component loaded from %s", edk2_cdx)
             except Exception as exc:
                 logger.warning("Could not load EDK2 primary from %s: %s", edk2_cdx, exc)
 
-    # Resolve @VCS_* placeholders
+    # Resolve @VCS_* placeholders for the EDK2 primary using top-level git describe
     edk2_ver = _get_edk2_version(location) if location else "unknown"
     logger.info("EDK2 version: %s", edk2_ver)
 
-    def _subst(val: str) -> str:
-        val = re.sub(r"@VCS_VERSION@", edk2_ver, val)
-        val = re.sub(r"@VCS_TAG@", f"edk2-stable{edk2_ver}", val)
-        val = re.sub(r"@VCS_AUTHORS@", "TianoCore contributors", val)
-        return val
-
-    def _subst_recursive(obj):
+    def _subst_with_map(obj, replacements: dict):
+        """Replace each ``@KEY@`` substring in every string with replacements[KEY]."""
         if isinstance(obj, str):
-            return _subst(obj)
+            out = obj
+            for k, v in replacements.items():
+                out = out.replace(k, v)
+            return out
         if isinstance(obj, list):
-            return [_subst_recursive(i) for i in obj]
+            return [_subst_with_map(i, replacements) for i in obj]
         if isinstance(obj, dict):
-            return {k: _subst_recursive(v) for k, v in obj.items()}
+            return {k: _subst_with_map(v, replacements) for k, v in obj.items()}
         return obj
 
-    primary = _subst_recursive(primary)
+    edk2_replacements = {
+        "@VCS_VERSION@": edk2_ver,
+        "@VCS_TAG@": f"edk2-stable{edk2_ver}",
+        "@VCS_AUTHORS@": "TianoCore contributors",
+    }
+    primary = _subst_with_map(primary, edk2_replacements)
+
+    # --- Build VCS URL -> submodule path map from .gitmodules ---
+    url_to_path = _parse_edk2_gitmodules(location) if location else {}
+
+    # Aliases for OSS components that have moved/forked but track the same code.
+    # Keys/values must already be in lowercased+stripped form.
+    _URL_ALIASES = {
+        # mbedtls org rename (ARMmbed -> Mbed-TLS, 2024)
+        "https://github.com/mbed-tls/mbedtls": "https://github.com/armmbed/mbedtls",
+        # libfdt lives in the dtc repo upstream but EDK2 pulls it via the
+        # devicetree-org/pylibfdt mirror.
+        "https://github.com/dgibson/dtc": "https://github.com/devicetree-org/pylibfdt",
+    }
+    # #region agent log 2135d7
+    try:
+        with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
+            _f.write(json.dumps({
+                "sessionId": "2135d7", "runId": "run1", "hypothesisId": "H2",
+                "location": "sbom.py:_merge_inf_cdx_direct",
+                "message": "parsed gitmodules",
+                "data": {"edk2_dir": location, "url_count": len(url_to_path),
+                         "sample": dict(list(url_to_path.items())[:3])},
+                "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+            }) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
+    def _vcs_url_of(comp: dict) -> str:
+        """Extract the canonical lowercase VCS URL of a CDX component."""
+        for ref in comp.get("externalReferences", []) or []:
+            if isinstance(ref, dict) and ref.get("type") == "vcs" and ref.get("url"):
+                url = ref["url"].rstrip("/")
+                if url.endswith(".git"):
+                    url = url[:-4]
+                return url.lower()
+        return ""
 
     # --- OSS submodule components from other uswid-data CDX files ---
     submodule_components: list[dict] = []
+    resolved_count = 0
+    unresolved_count = 0
     if fallback_path and os.path.isdir(fallback_path):
         for cdx_file in sorted(os.listdir(fallback_path)):
             if not cdx_file.endswith(".cdx.json") or cdx_file == "edk2.cdx.json":
@@ -298,15 +478,68 @@ def _merge_inf_cdx_direct(
             fp = os.path.join(fallback_path, cdx_file)
             try:
                 fd = json.load(open(fp, encoding="utf-8"))
-                for comp in fd.get("components", []):
-                    if comp:
-                        submodule_components.append(comp)
+                file_comps = list(fd.get("components", []) or [])
                 mc = fd.get("metadata", {}).get("component", {})
                 if mc and mc.get("name"):
-                    submodule_components.append(mc)
+                    file_comps.append(mc)
+                for comp in file_comps:
+                    if not comp:
+                        continue
+                    vcs_url = _vcs_url_of(comp)
+                    # Resolve via the .gitmodules map, applying alias renames.
+                    sub_dir = url_to_path.get(vcs_url) if vcs_url else None
+                    if sub_dir is None and vcs_url in _URL_ALIASES:
+                        sub_dir = url_to_path.get(_URL_ALIASES[vcs_url])
+                    if sub_dir and os.path.isdir(sub_dir):
+                        clean, raw, base_tag, commit_sha, patch_count = _resolve_submodule_vcs(sub_dir)
+                        if clean and clean != "NOASSERTION":
+                            comp = _subst_with_map(comp, {
+                                "@VCS_VERSION@": clean,
+                                "@VCS_TAG@": clean,
+                                "@VCS_AUTHORS@": "NOASSERTION",
+                            })
+                            # Pedigree: record post-tag commits as patches per workspace rules.
+                            if patch_count > 0 and commit_sha:
+                                comp.setdefault("pedigree", {}).setdefault("notes",
+                                    f"{patch_count} commits past tag {base_tag} "
+                                    f"(HEAD={commit_sha})")
+                            resolved_count += 1
+                            submodule_components.append(comp)
+                        else:
+                            unresolved_count += 1
+                            submodule_components.append(comp)
+                    else:
+                        # No matching EDK2 submodule -> this OSS component is
+                        # not part of the firmware being assembled. Drop it
+                        # rather than emit unsubstituted @VCS_TAG@ placeholders.
+                        if "@VCS_" in json.dumps(comp):
+                            unresolved_count += 1
+                            continue
+                        # Hardcoded-version uswid-data entry without a
+                        # matching submodule: include it (no placeholders to
+                        # leave behind, but it may still be linked).
+                        submodule_components.append(comp)
             except Exception as exc:
                 logger.warning("Could not load fallback CDX %s: %s", fp, exc)
-        logger.info("Loaded %d submodule components from uswid-data", len(submodule_components))
+        logger.info(
+            "Loaded %d submodule components (resolved VCS: %d, unresolved: %d)",
+            len(submodule_components), resolved_count, unresolved_count,
+        )
+        # #region agent log 2135d7
+        try:
+            with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({
+                    "sessionId": "2135d7", "runId": "run1", "hypothesisId": "H1+H3",
+                    "location": "sbom.py:_merge_inf_cdx_direct",
+                    "message": "submodule VCS resolution complete",
+                    "data": {"total": len(submodule_components),
+                             "resolved": resolved_count,
+                             "unresolved": unresolved_count},
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }) + "\n")
+        except Exception:
+            pass
+        # #endregion
 
     # --- per-.inf components ---
     inf_components: list[dict] = []
