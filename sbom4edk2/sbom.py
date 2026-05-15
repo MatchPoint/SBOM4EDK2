@@ -93,9 +93,15 @@ def merge_cdx_files(
     *,
     parent_yaml: Optional[str] = None,
     fallback_path: Optional[str] = None,
+    sbom_type: str = "source",
     chunk_size: int = 100,
 ) -> int:
     """Hierarchically merge CDX files via ``uswid``.
+
+    *sbom_type* is passed as ``--sbom-type`` to every uswid merge invocation
+    so the CycloneDX ``metadata.lifecycles[].phase`` field is set correctly per
+    UEFI SBOM Guidelines §3.1.1.3 (``source``→``pre-build``,
+    ``build``→``build``, ``binary``→``post-build``).
 
     Returns 0 on success, non-zero on failure.
     """
@@ -134,6 +140,7 @@ def merge_cdx_files(
             cmd.append("--fixup")
             if fallback_path:
                 cmd += ["--fallback-path", fallback_path]
+            cmd += ["--sbom-type", sbom_type]
             cmd += ["--save", out]
 
             rc = run_command(cmd)

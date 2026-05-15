@@ -70,6 +70,10 @@ def main() -> None:
     parser.add_argument("--uswid-data", default=None, help="Path to uswid-data for fallback metadata")
     parser.add_argument("--parent-yaml", default=None, help="Parent component YAML to include in merge")
     parser.add_argument("--max-workers", type=int, default=12, help="Threads for .inf processing (default: 12)")
+    parser.add_argument(
+        "--sbom-type", default="source", choices=["source", "build", "binary"],
+        help="SBOM lifecycle type per UEFI SBOM Guidelines §3.1.1.3 (default: source)",
+    )
     args = parser.parse_args()
 
     api_key = args.apikey or os.environ.get("NVD_API_KEY")
@@ -134,6 +138,7 @@ def main() -> None:
         cdx_files, final_cdx,
         parent_yaml=args.parent_yaml,
         fallback_path=args.uswid_data,
+        sbom_type=args.sbom_type,
     )
     if rc != 0:
         logger.error("CDX merge failed (exit code %d)", rc)
