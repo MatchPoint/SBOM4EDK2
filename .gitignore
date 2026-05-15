@@ -205,3 +205,26 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ---------------------------------------------------------------------------
+# SBOM4EDK2 — generated outputs and large working directories
+# ---------------------------------------------------------------------------
+
+# CVE scan reports (Excel) — regenerated on every run
+CVE_List*.xlsx
+API_Calls_Report*.xlsx
+
+# Generated EDK2 SBOM at repo root — produced by python-uswid-sbom integration test
+/edk2.cdx.json
+
+# Intermediate per-submodule CycloneDX files produced during SBOM generation
+uswid-data/
+
+# EDK2 source tree checkout (large; clone separately)
+edk2/
+
+# Runtime log files
+*.log
+
+# Grype vulnerability database cache
+.grype/
