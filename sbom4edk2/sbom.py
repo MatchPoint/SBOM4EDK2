@@ -218,11 +218,12 @@ def _parse_edk2_gitmodules(edk2_dir: str) -> dict:
                 url = url[:-4]
             abs_path = os.path.join(parent_dir, current["path"])
             key = url.lower()
-            # When the same URL is referenced both at top-level and nested,
-            # prefer the top-level (shortest absolute path) submodule, which
-            # is the version EDK2 actually links against.
-            existing = result.get(key)
-            if existing is None or len(abs_path) < len(existing):
+            # First-write-wins: ``os.walk`` is top-down so the top-level
+            # ``.gitmodules`` is processed before any nested one. That makes
+            # the top-level submodule the canonical one when the same URL
+            # appears at multiple nesting depths (e.g. OpenSSL is referenced
+            # both top-level and under libspdm/os_stub/openssllib/openssl).
+            if key not in result:
                 result[key] = abs_path
 
     for root, dirs, files in os.walk(edk2_dir):
@@ -469,6 +470,9 @@ def _merge_inf_cdx_direct(
 
     # --- OSS submodule components from other uswid-data CDX files ---
     submodule_components: list[dict] = []
+    # (abs_submodule_path, bom_ref) for every resolved submodule, used to
+    # build the parent/child dependency tree later.
+    resolved_paths: list[tuple] = []
     resolved_count = 0
     unresolved_count = 0
     if fallback_path and os.path.isdir(fallback_path):
@@ -505,6 +509,9 @@ def _merge_inf_cdx_direct(
                                     f"(HEAD={commit_sha})")
                             resolved_count += 1
                             submodule_components.append(comp)
+                            sub_bom = comp.get("bom-ref")
+                            if sub_bom:
+                                resolved_paths.append((os.path.normpath(sub_dir), sub_bom))
                         else:
                             unresolved_count += 1
                             submodule_components.append(comp)
@@ -562,6 +569,69 @@ def _merge_inf_cdx_direct(
             seen_refs.add(key)
             all_components.append(comp)
 
+    # --- Build CycloneDX dependencies[] from the .gitmodules path tree ---
+    # Each nested submodule's absolute path begins with its parent submodule's
+    # absolute path. For a given submodule, the parent is the *longest other
+    # submodule path* that is a strict prefix of its own path. Submodules with
+    # no enclosing submodule are children of the EDK2 primary component.
+    dependencies: list[dict] = []
+    primary_ref = primary.get("bom-ref")
+    if primary_ref and resolved_paths:
+        all_paths = [p for p, _ in resolved_paths]
+        path_to_ref = {p: r for p, r in resolved_paths}
+        deps_map: dict = {}
+
+        # #region agent log 2135d7
+        try:
+            with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({
+                    "sessionId": "2135d7", "runId": "run1", "hypothesisId": "H1+H4",
+                    "location": "sbom.py:_merge_inf_cdx_direct",
+                    "message": "resolved_paths dump",
+                    "data": {"count": len(resolved_paths),
+                             "items": [(p, r) for p, r in resolved_paths]},
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+
+        for path, ref in resolved_paths:
+            ancestors = [
+                p for p in all_paths
+                if p != path and path.startswith(p + os.sep)
+            ]
+            if ancestors:
+                parent_path = max(ancestors, key=len)
+                parent_ref = path_to_ref[parent_path]
+            else:
+                parent_ref = primary_ref
+            if parent_ref == ref:
+                continue  # never self-reference
+            deps_map.setdefault(parent_ref, []).append(ref)
+
+        for ref, children in sorted(deps_map.items()):
+            dependencies.append({
+                "ref": ref,
+                "dependsOn": sorted(set(children)),
+            })
+
+        # #region agent log 2135d7
+        try:
+            with open("debug-2135d7.log", "a", encoding="utf-8") as _f:
+                _f.write(json.dumps({
+                    "sessionId": "2135d7", "runId": "run1", "hypothesisId": "H1+H4",
+                    "location": "sbom.py:_merge_inf_cdx_direct",
+                    "message": "dependencies tree built",
+                    "data": {"resolved_paths": len(resolved_paths),
+                             "dep_groups": len(dependencies),
+                             "primary_children": len(deps_map.get(primary_ref, []))},
+                    "timestamp": int(datetime.now(timezone.utc).timestamp() * 1000),
+                }) + "\n")
+        except Exception:
+            pass
+        # #endregion
+
     # Build the final CDX
     output_cdx: dict = {
         "bomFormat": "CycloneDX",
@@ -581,6 +651,7 @@ def _merge_inf_cdx_direct(
             "component": primary,
         },
         "components": all_components,
+        "dependencies": dependencies,
     }
 
     try:
