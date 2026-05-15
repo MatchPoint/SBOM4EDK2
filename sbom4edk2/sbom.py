@@ -169,6 +169,104 @@ def merge_cdx_files(
     return 0
 
 
+def process_inf_file(
+    inf_path: str,
+    output_folder: str,
+    *,
+    uswid_data: Optional[str] = None,
+) -> tuple[bool, Optional[str]]:
+    """Run ``uswid --load`` on one ``.inf`` file and save a per-component CDX."""
+    if not os.path.isfile(inf_path):
+        return False, f"File not found: {inf_path}"
+
+    base = os.path.splitext(os.path.basename(inf_path))[0]
+    out = os.path.join(output_folder, f"{base}.cdx.json")
+
+    cmd = ["uswid", "--load", inf_path, "--fixup"]
+    if uswid_data:
+        cmd += ["--fallback-path", uswid_data]
+    cmd += ["--save", out]
+
+    rc = run_command(cmd)
+    if rc != 0:
+        return False, f"uswid exited with code {rc} for {inf_path}"
+    return True, None
+
+
+def generate_sbom_from_checkout(
+    location: str,
+    output_name: str,
+    *,
+    uswid_data: Optional[str] = None,
+    parent_yaml: Optional[str] = None,
+    sbom_type: str = "source",
+    max_workers: int = 12,
+) -> Optional[str]:
+    """Generate a merged CycloneDX SBOM from an EDK2 source tree.
+
+    Scans *location* for ``.inf`` files, processes each with
+    ``uswid --load --fixup``, then merges all per-component CDX files into a
+    single ``<output_name>.cdx.json`` in the current working directory.
+
+    Returns the path to the merged CDX file on success, ``None`` on failure.
+    """
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    inf_files = find_inf_files(location)
+    if not inf_files:
+        logger.warning("No .inf files found in %s", location)
+        return None
+
+    cdx_output = os.path.join(os.getcwd(), "cdx_json_output")
+    os.makedirs(cdx_output, exist_ok=True)
+
+    logger.info("Processing %d .inf files with %d workers...", len(inf_files), max_workers)
+    failed: list[str] = []
+    done = [0]
+    lock = threading.Lock()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(process_inf_file, inf, cdx_output, uswid_data=uswid_data): inf
+            for inf in inf_files
+        }
+        for future in as_completed(futures):
+            inf = futures[future]
+            success, err = future.result()
+            with lock:
+                done[0] += 1
+                if not success:
+                    failed.append(inf)
+                if done[0] % 100 == 0:
+                    logger.info("Progress: %d/%d .inf files processed", done[0], len(inf_files))
+
+    logger.info(
+        "INF processing complete: %d succeeded, %d failed",
+        len(inf_files) - len(failed),
+        len(failed),
+    )
+
+    cdx_files = list_cdx_files(cdx_output)
+    if not cdx_files:
+        logger.error("No CDX files generated from .inf processing")
+        return None
+
+    output_path = os.path.join(os.getcwd(), f"{output_name}.cdx.json")
+    rc = merge_cdx_files(
+        cdx_files,
+        output_path,
+        parent_yaml=parent_yaml,
+        fallback_path=uswid_data,
+        sbom_type=sbom_type,
+    )
+    if rc != 0:
+        logger.error("CDX merge failed (rc=%d)", rc)
+        return None
+
+    return output_path
+
+
 def find_inf_files(root: str) -> list[str]:
     """Recursively find all ``.inf`` files under *root*."""
     results: list[str] = []
