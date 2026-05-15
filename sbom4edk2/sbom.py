@@ -109,7 +109,7 @@ def merge_cdx_files(
         logger.error("No CDX files to merge")
         return 1
 
-    logger.info("Merging %d CDX files → %s", len(cdx_files), output_path)
+    logger.info("Merging %d CDX files -> %s", len(cdx_files), output_path)
 
     for path in cdx_files:
         sanitize_cdx_file(path)

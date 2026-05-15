@@ -145,7 +145,7 @@ def scan_sbom_with_ghsa(
         )
 
     logger.info(
-        "GHSA scan: EDK2 SBOM version = %s, querying TianoCore advisories …",
+        "GHSA scan: EDK2 SBOM version = %s, querying TianoCore advisories...",
         edk2_ver or "UNKNOWN",
     )
 

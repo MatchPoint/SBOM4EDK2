@@ -129,7 +129,7 @@ def main() -> None:
     done = [0]
     lock = threading.Lock()
 
-    logger.info("Processing %d .inf files with %d workers …", len(inf_files), args.max_workers)
+    logger.info("Processing %d .inf files with %d workers...", len(inf_files), args.max_workers)
     with ThreadPoolExecutor(max_workers=args.max_workers) as pool:
         futures = {
             pool.submit(process_inf_file, inf, cdx_output, uswid_data=args.uswid_data): inf
