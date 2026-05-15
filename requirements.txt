@@ -2,4 +2,15 @@ openpyxl>=3.1.5
 pandas>=3.0.1
 python-dotenv>=1.0.0
 requests>=2.32.0
-uswid @ git+https://github.com/MatchPoint/python-uswid-sbom.git@90bc8902c3a608246d3d30e8b40aea723791f455
+# NOTE: This project uses the MatchPoint/python-uswid-sbom fork of
+# hughsie/python-uswid.  The fork adds UEFI SBOM Guidelines compliance
+# (CPE versioning, CycloneDX pedigree fixes, TianoCore supplier metadata).
+# Do NOT replace this with the upstream package from PyPI (pip install uswid)
+# or from https://github.com/hughsie/python-uswid.
+#
+# Development (local editable install — live code, no reinstall needed):
+uswid @ file:///mnt/c/Users/gt164/repos/python-uswid-sbom
+#
+# Production / CI (pin to a specific commit on the remote fork):
+#   uswid @ git+https://github.com/MatchPoint/python-uswid-sbom.git@<commit>
+# then: pip install -r requirements.txt

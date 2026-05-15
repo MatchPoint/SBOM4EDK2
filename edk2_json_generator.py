@@ -12,6 +12,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 from sbom4edk2.cve_analyzer import generate_cve_report
+from sbom4edk2.ghsa import scan_sbom_with_ghsa
+from sbom4edk2.grype import is_grype_available, scan_sbom_with_grype
 from sbom4edk2.sbom import (
     find_inf_files,
     list_cdx_files,
@@ -74,11 +76,36 @@ def main() -> None:
         "--sbom-type", default="source", choices=["source", "build", "binary"],
         help="SBOM lifecycle type per UEFI SBOM Guidelines §3.1.1.3 (default: source)",
     )
+    parser.add_argument(
+        "--scanner", default="auto", choices=["auto", "nvd", "grype", "both"],
+        help=(
+            "Vulnerability scanner back-end (default: auto). "
+            "'auto' uses NVD when NVD_API_KEY is set, otherwise grype. "
+            "See README for trade-off details."
+        ),
+    )
+    parser.add_argument(
+        "--no-ghsa", dest="ghsa", action="store_false", default=True,
+        help="Skip the TianoCore GHSA advisory check (included by default).",
+    )
     args = parser.parse_args()
 
     api_key = args.apikey or os.environ.get("NVD_API_KEY")
-    if not api_key:
-        logger.error("NVD API key required. Use -k or set NVD_API_KEY in .env")
+
+    if args.scanner == "auto":
+        use_nvd = bool(api_key)
+        use_grype = not bool(api_key)
+        logger.info("Scanner auto-detect: %s", "NVD" if use_nvd else "grype (no NVD_API_KEY)")
+    else:
+        use_nvd = args.scanner in ("nvd", "both")
+        use_grype = args.scanner in ("grype", "both")
+
+    if use_nvd and not api_key:
+        logger.error(
+            "NVD API key required for --scanner %s. "
+            "Use -k/--apikey or set NVD_API_KEY in .env",
+            args.scanner,
+        )
         sys.exit(1)
 
     location = os.path.abspath(args.location)
@@ -144,8 +171,26 @@ def main() -> None:
         logger.error("CDX merge failed (exit code %d)", rc)
         sys.exit(2)
 
-    # Generate CVE report
-    generate_cve_report(final_cdx, api_key)
+    # Generate CVE report(s)
+    base = os.path.splitext(os.path.basename(final_cdx))[0]
+
+    if use_nvd:
+        generate_cve_report(final_cdx, api_key)
+
+    if use_grype:
+        if is_grype_available():
+            scan_sbom_with_grype(final_cdx, output_xlsx=f"CVE_List_grype_{base}.xlsx")
+        else:
+            logger.warning(
+                "grype binary not found — skipping grype scan.  "
+                "Install: curl -sSfL "
+                "https://raw.githubusercontent.com/anchore/grype/main/install.sh"
+                " | sh -s -- -b ~/.local/bin"
+            )
+
+    if args.ghsa:
+        scan_sbom_with_ghsa(final_cdx, output_xlsx=f"CVE_List_ghsa_{base}.xlsx")
+
     logger.info("Done.")
 
 

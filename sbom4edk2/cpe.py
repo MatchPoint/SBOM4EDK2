@@ -35,7 +35,21 @@ def is_valid_component(component: dict) -> bool:
 
 
 def build_cpe_pattern(component: dict) -> Optional[str]:
-    """Build a CPE 2.3 pattern string from a SBOM component, or None if invalid."""
+    """Build a CPE 2.3 pattern string from a SBOM component, or None if invalid.
+
+    When the SBOM already carries a ``cpe`` field (e.g. set by python-uswid-sbom
+    from NVD-verified data), it is returned as-is.  This is always more accurate
+    than a pattern constructed from the component's name and version fields,
+    because NVD product names often differ from the package names used in SBOMs
+    (e.g. ``mbed_tls`` vs ``mbedtls``).
+
+    For components without an explicit CPE the original wildcard-vendor pattern
+    construction is used as a fallback.
+    """
+    # Use the SBOM's own CPE when present — verified against NVD at generation time.
+    if component.get("cpe"):
+        return component["cpe"]
+
     name = component["name"]
     version = component["version"]
 
