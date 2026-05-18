@@ -2,13 +2,16 @@
 
 Generate a Software Bill of Materials (SBOM) from [TianoCore EDK II](https://github.com/tianocore/edk2) source code and run CVE vulnerability analysis via the [NIST NVD](https://nvd.nist.gov/) API, [Grype](https://github.com/anchore/grype), and TianoCore GitHub Security Advisories (GHSA).
 
-> **SBOM engine:** Per-`.inf` parsing uses
-> [python-uswid-sbom](https://github.com/MatchPoint/python-uswid-sbom), a fork of
-> [python-uswid](https://github.com/hughsie/python-uswid) extended with UEFI SBOM
-> Guidelines (CISA Level 1) compliance features.  Top-level assembly — recursive
+> **SBOM engine:** All SBOM-creation work — per-`.inf` parsing, recursive
 > `.gitmodules` walk, per-submodule version resolution via `git describe`,
-> CycloneDX `dependencies[]` tree, and the `--sbom-type` lifecycle flag — is
-> implemented directly in `sbom4edk2/sbom.py` (`_merge_inf_cdx_direct`).
+> `@VCS_*@` placeholder substitution, orphan-template filtering, CycloneDX
+> `dependencies[]` tree wiring, and the `--sbom-type` lifecycle flag — runs
+> inside [python-uswid-sbom](https://github.com/MatchPoint/python-uswid-sbom)
+> `>= 0.2.0`, a fork of [python-uswid](https://github.com/hughsie/python-uswid)
+> extended for UEFI SBOM Guidelines (CISA Level 1) compliance and end-to-end
+> EDK II assembly. SBOM4EDK2 itself is a thin orchestrator: clone EDK II,
+> invoke `uswid --primary-dir`, run the CVE scanners (NVD / Grype / GHSA) on
+> the result.
 
 ## Quick Start
 
@@ -37,7 +40,8 @@ sbom4edk2/              Shared library
   cpe.py                CPE pattern construction and name normalisation
   cve_analyzer.py       Concurrent CVE analysis and Excel report generation
   grype.py              Grype-based SBOM scanner (no API key required)
-  sbom.py               CycloneDX parsing, INF-driven SBOM assembly, per-submodule VCS resolution, dependency tree
+  ghsa.py               TianoCore GitHub Security Advisory scanner
+  sbom.py               Thin wrapper over `uswid --primary-dir` plus small CDX parsing helpers
   git_utils.py          Git clone/pull operations
 
 main.py                 Scenario 1 — clone repo + generate SBOM + CVE list
@@ -89,15 +93,17 @@ you want authoritative NVD output and already have a key, use `--scanner nvd`.
 
 > **Note on CPE accuracy:** `cpe.py` uses the explicit `cpe` field already
 > present on the component when available rather than constructing a wildcard
-> pattern.  Those CPE strings get accurate version numbers at SBOM-build time:
-> `_merge_inf_cdx_direct` walks the EDK2 `.gitmodules` tree (including nested
-> submodules under `openssl/`), runs `git describe` in each submodule clone,
-> normalises the result to an NVD-matchable form (strips `v`/`V`, project-name,
-> and `+suffix` prefixes), and substitutes `@VCS_TAG@`/`@VCS_VERSION@` per
-> component.  A small URL alias map handles org renames
-> (`Mbed-TLS`↔`ARMmbed`, `dgibson/dtc`↔`devicetree-org/pylibfdt`).  Components
-> whose VCS URL doesn't match any EDK2 submodule are dropped to avoid emitting
-> unsubstituted placeholders.
+> pattern. Accurate version numbers in those CPE strings come from
+> `uswid --primary-dir` at SBOM-build time: it walks the EDK II `.gitmodules`
+> tree (including nested submodules under `openssl/`) via
+> `uswid.submodule.walk_gitmodules`, runs `git describe` in each submodule
+> clone, normalises the result to an NVD-matchable form (strips `v`/`V`,
+> project-name, and `+suffix` prefixes), and substitutes
+> `@VCS_TAG@`/`@VCS_VERSION@` per component. The
+> `uswid.submodule.SUBMODULE_URL_ALIASES` table handles org renames
+> (`Mbed-TLS`↔`ARMmbed`, `dgibson/dtc`↔`devicetree-org/pylibfdt`). Components
+> whose VCS URL doesn't match any EDK II submodule are dropped to avoid
+> emitting unsubstituted placeholders.
 
 ### Installing grype
 
@@ -188,7 +194,7 @@ python main.py -o edk2 -r https://github.com/tianocore/edk2.git
 ### Scenario 2 — Local EDK2 Checkout: Generate SBOM and CVE List
 
 ```bash
-python edk2_json_generator.py -l <path> -n <name> [-k <key>] [--uswid-data <path>] [--parent-yaml <file>] [--max-workers N]
+python edk2_json_generator.py -l <path> -n <name> [-k <key>] [--uswid-data <path>]
 ```
 
 | Flag | Description |
@@ -196,19 +202,19 @@ python edk2_json_generator.py -l <path> -n <name> [-k <key>] [--uswid-data <path
 | `-l`, `--location` | Path to local EDK2 source tree |
 | `-n`, `--jsonname` | Output CDX filename (without extension) |
 | `-k`, `--apikey` | *(Optional)* NVD API key — overrides `.env`; required when `--scanner nvd/both` |
-| `--uswid-data` | *(Optional)* Path to [uswid-data](https://github.com/hughsie/uswid-data.git) clone |
-| `--parent-yaml` | *(Optional)* Parent component YAML for merge |
-| `--max-workers` | *(Optional)* Thread count for `.inf` processing (default: 12) |
+| `--uswid-data` | *(Optional)* Path to [uswid-data](https://github.com/hughsie/uswid-data.git) clone (curated submodule SBOM templates) |
 | `--sbom-type` | *(Optional)* `source` \| `build` \| `binary` — SBOM lifecycle type per UEFI SBOM Guidelines §3.1.1.3 (default: `source`) |
 | `--scanner` | *(Optional)* `auto` \| `nvd` \| `grype` \| `both` — scanner back-end (default: `auto`) |
 | `--no-ghsa` | *(Optional)* Skip TianoCore GHSA advisory check (included by default) |
+
+The old `--parent-yaml` and `--max-workers` flags are accepted but silently ignored: `uswid --find` discovers all `.inf` files in a single pass, so no per-file thread pool is needed in this repo.
 
 **Example (auto — recommended):**
 ```bash
 python edk2_json_generator.py -l /path/to/edk2 -n edk2 --uswid-data /path/to/uswid-data
 ```
 
-**Outputs:** `cdx_json_output/` (individual per-`.inf` CDX files), `cdx_json_output/<name>.cdx.json` (merged SBOM), `CVE_List.xlsx`, `edk2_json_generator_<timestamp>.log`
+**Outputs:** `<name>.cdx.json` (final merged SBOM in the current directory), `CVE_List.xlsx`, `edk2_json_generator_<timestamp>.log`
 
 ---
 
