@@ -309,6 +309,197 @@ class TestSbomParsing(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# sbom4edk2.sbom — generate_sbom_from_checkout (the uswid CLI wrapper)
+# ---------------------------------------------------------------------------
+
+from unittest import mock
+
+from sbom4edk2.sbom import (
+    _compute_edk2_primary_bomref,
+    generate_sbom_from_checkout,
+)
+
+
+class TestGenerateSbomFromCheckout(unittest.TestCase):
+    """Tests for the thin wrapper over ``uswid --primary-dir`` (Phase 5/6).
+
+    These are pure-mock tests: ``subprocess.run`` and ``uSwidVcs.get_tag``
+    are stubbed so we don't shell out to a real EDK II clone in CI.
+    """
+
+    def test_missing_location_returns_none(self):
+        result = generate_sbom_from_checkout(
+            "/does/not/exist", "out", uswid_data=None
+        )
+        self.assertIsNone(result)
+
+    def test_invokes_uswid_with_expected_args(self):
+        with tempfile.TemporaryDirectory() as edk2:
+            # Stub the primary-bom-ref computation so we don't need a real
+            # git checkout in the temp dir.
+            with mock.patch(
+                "sbom4edk2.sbom._compute_edk2_primary_bomref",
+                return_value="pkg:github/tianocore/edk2@202411",
+            ), mock.patch("sbom4edk2.sbom.subprocess.run") as run_mock:
+                # Pretend uswid succeeded and wrote the output file.
+                completed = mock.Mock()
+                completed.returncode = 0
+                completed.stdout = ""
+                completed.stderr = ""
+
+                def _fake_run(cmd, *_args, **_kwargs):
+                    # Side-effect: create the output file so the wrapper's
+                    # existence check succeeds.
+                    save_idx = cmd.index("--save")
+                    with open(cmd[save_idx + 1], "w", encoding="utf-8") as f:
+                        f.write("{}")
+                    return completed
+
+                run_mock.side_effect = _fake_run
+
+                out = generate_sbom_from_checkout(
+                    edk2,
+                    "edk2",
+                    uswid_data=None,
+                    sbom_type="source",
+                )
+
+        self.assertIsNotNone(out)
+        self.assertTrue(out.endswith("edk2.cdx.json"))
+
+        # Inspect the invocation: uswid must have been called with the new
+        # --primary-dir flag, NOT a thread-pool / merge-script pipeline.
+        run_mock.assert_called_once()
+        cmd = run_mock.call_args.args[0]
+        self.assertEqual(cmd[0], "uswid")
+        self.assertIn("--primary-dir", cmd)
+        self.assertEqual(cmd[cmd.index("--primary-dir") + 1], edk2)
+        self.assertIn("--find", cmd)
+        self.assertEqual(cmd[cmd.index("--find") + 1], edk2)
+        self.assertIn("--fixup", cmd)
+        self.assertIn("--format", cmd)
+        self.assertEqual(cmd[cmd.index("--format") + 1], "cyclonedx")
+        self.assertIn("--sbom-type", cmd)
+        self.assertEqual(cmd[cmd.index("--sbom-type") + 1], "source")
+        self.assertIn("--primary", cmd)
+        self.assertEqual(
+            cmd[cmd.index("--primary") + 1],
+            "pkg:github/tianocore/edk2@202411",
+        )
+
+    def test_passes_fallback_path_when_provided(self):
+        with tempfile.TemporaryDirectory() as edk2, \
+                tempfile.TemporaryDirectory() as uswid_data:
+            with mock.patch(
+                "sbom4edk2.sbom._compute_edk2_primary_bomref",
+                return_value=None,  # exercise the no-primary path too
+            ), mock.patch("sbom4edk2.sbom.subprocess.run") as run_mock:
+                completed = mock.Mock()
+                completed.returncode = 0
+                completed.stdout = ""
+                completed.stderr = ""
+
+                def _fake_run(cmd, *_args, **_kwargs):
+                    save_idx = cmd.index("--save")
+                    with open(cmd[save_idx + 1], "w", encoding="utf-8") as f:
+                        f.write("{}")
+                    return completed
+
+                run_mock.side_effect = _fake_run
+
+                out = generate_sbom_from_checkout(
+                    edk2,
+                    "out",
+                    uswid_data=uswid_data,
+                )
+
+        self.assertIsNotNone(out)
+        cmd = run_mock.call_args.args[0]
+        self.assertIn("--fallback-path", cmd)
+        self.assertEqual(cmd[cmd.index("--fallback-path") + 1], uswid_data)
+        # No --primary appended when _compute_edk2_primary_bomref returns None.
+        self.assertNotIn("--primary", cmd)
+
+    def test_uswid_nonzero_returns_none(self):
+        with tempfile.TemporaryDirectory() as edk2, \
+                mock.patch("sbom4edk2.sbom.subprocess.run") as run_mock:
+            completed = mock.Mock()
+            completed.returncode = 7
+            completed.stdout = ""
+            completed.stderr = "boom"
+            run_mock.return_value = completed
+            out = generate_sbom_from_checkout(edk2, "out")
+            self.assertIsNone(out)
+
+    def test_uswid_succeeded_but_no_output_file_returns_none(self):
+        with tempfile.TemporaryDirectory() as edk2, \
+                mock.patch("sbom4edk2.sbom.subprocess.run") as run_mock:
+            completed = mock.Mock()
+            completed.returncode = 0
+            completed.stdout = ""
+            completed.stderr = ""
+            run_mock.return_value = completed
+            out = generate_sbom_from_checkout(edk2, "out_unique_name_42")
+            self.assertIsNone(out)
+
+    def test_legacy_kwargs_are_silently_ignored(self):
+        """Old call-sites passing parent_yaml/max_workers must keep working."""
+        with tempfile.TemporaryDirectory() as edk2, \
+                mock.patch(
+                    "sbom4edk2.sbom._compute_edk2_primary_bomref",
+                    return_value=None,
+                ), \
+                mock.patch("sbom4edk2.sbom.subprocess.run") as run_mock:
+            completed = mock.Mock()
+            completed.returncode = 0
+            completed.stdout = completed.stderr = ""
+
+            def _fake_run(cmd, *_args, **_kwargs):
+                save_idx = cmd.index("--save")
+                with open(cmd[save_idx + 1], "w", encoding="utf-8") as f:
+                    f.write("{}")
+                return completed
+
+            run_mock.side_effect = _fake_run
+
+            out = generate_sbom_from_checkout(
+                edk2,
+                "out",
+                parent_yaml="ignored.yaml",
+                max_workers=99,
+            )
+        self.assertIsNotNone(out)
+
+
+class TestComputeEdk2PrimaryBomref(unittest.TestCase):
+    """Tests for _compute_edk2_primary_bomref (uSwidVcs.get_tag wrapper)."""
+
+    def test_returns_bomref_from_get_tag(self):
+        with mock.patch("uswid.vcs.uSwidVcs") as vcs_cls:
+            vcs_cls.return_value.get_tag.return_value = "202411"
+            ref = _compute_edk2_primary_bomref("/fake/edk2")
+        self.assertEqual(ref, "pkg:github/tianocore/edk2@202411")
+
+    def test_returns_none_on_noassertion(self):
+        with mock.patch("uswid.vcs.uSwidVcs") as vcs_cls:
+            vcs_cls.return_value.get_tag.return_value = "NOASSERTION"
+            ref = _compute_edk2_primary_bomref("/fake/edk2")
+        self.assertIsNone(ref)
+
+    def test_returns_none_on_empty_tag(self):
+        with mock.patch("uswid.vcs.uSwidVcs") as vcs_cls:
+            vcs_cls.return_value.get_tag.return_value = ""
+            ref = _compute_edk2_primary_bomref("/fake/edk2")
+        self.assertIsNone(ref)
+
+    def test_returns_none_when_get_tag_raises(self):
+        with mock.patch("uswid.vcs.uSwidVcs") as vcs_cls:
+            vcs_cls.return_value.get_tag.side_effect = RuntimeError("boom")
+            ref = _compute_edk2_primary_bomref("/fake/edk2")
+        self.assertIsNone(ref)
+
+
+# ---------------------------------------------------------------------------
 # sbom4edk2.ghsa
 # ---------------------------------------------------------------------------
 
