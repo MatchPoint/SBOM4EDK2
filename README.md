@@ -129,6 +129,17 @@ These advisories are published directly by the EDK2 maintainers — often
 EDK2-specific CVEs.  No API key is required; set `GITHUB_TOKEN` in `.env` to
 raise the GitHub API rate limit from 60 to 5,000 requests/hour.
 
+**Version matching** uses the EDK2 primary component’s 6-digit YYYYMM label
+(from `metadata.component.cpe` or `version`, e.g. `202602` from
+`edk2-stable202602+…`).  An advisory applies only when that label falls within
+`vulnerable_version_range` **and** is strictly before the fix release.
+
+**Empty `patched_versions` on GitHub** does not mean “no fix”.  When TianoCore
+publishes an advisory without filling that field, SBOM4EDK2 infers the fix as
+the **next stable release** after the last affected label (~quarterly cadence:
+`<=202502` → fix `202505`).  The `fix_versions` column shows that value.  If
+your SBOM version is **at or past** the inferred fix, the advisory is omitted.
+
 To skip the GHSA check:
 
 ```bash

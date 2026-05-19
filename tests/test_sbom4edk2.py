@@ -335,11 +335,9 @@ class TestGenerateSbomFromCheckout(unittest.TestCase):
 
     def test_invokes_uswid_with_expected_args(self):
         with tempfile.TemporaryDirectory() as edk2:
-            # Stub the primary-bom-ref computation so we don't need a real
-            # git checkout in the temp dir.
             with mock.patch(
                 "sbom4edk2.sbom._compute_edk2_primary_bomref",
-                return_value="pkg:github/tianocore/edk2@202411",
+                return_value=None,
             ), mock.patch("sbom4edk2.sbom.subprocess.run") as run_mock:
                 # Pretend uswid succeeded and wrote the output file.
                 completed = mock.Mock()
@@ -371,20 +369,59 @@ class TestGenerateSbomFromCheckout(unittest.TestCase):
         # --primary-dir flag, NOT a thread-pool / merge-script pipeline.
         run_mock.assert_called_once()
         cmd = run_mock.call_args.args[0]
-        self.assertEqual(cmd[0], "uswid")
+        self.assertEqual(cmd[0:3], [sys.executable, "-m", "uswid.cli"])
         self.assertIn("--primary-dir", cmd)
         self.assertEqual(cmd[cmd.index("--primary-dir") + 1], edk2)
-        self.assertIn("--find", cmd)
-        self.assertEqual(cmd[cmd.index("--find") + 1], edk2)
+        self.assertNotIn(
+            "--find", cmd, "full .inf scan is opt-in via SBOM4EDK2_SCAN_INFS=1"
+        )
         self.assertIn("--fixup", cmd)
         self.assertIn("--format", cmd)
         self.assertEqual(cmd[cmd.index("--format") + 1], "cyclonedx")
         self.assertIn("--sbom-type", cmd)
         self.assertEqual(cmd[cmd.index("--sbom-type") + 1], "source")
-        self.assertIn("--primary", cmd)
-        self.assertEqual(
-            cmd[cmd.index("--primary") + 1],
-            "pkg:github/tianocore/edk2@202411",
+        self.assertNotIn(
+            "--primary", cmd,
+            "no --primary when uswid_data is omitted (no parent template loaded)",
+        )
+
+    def test_loads_parent_template_when_uswid_data_present(self):
+        with tempfile.TemporaryDirectory() as edk2, tempfile.TemporaryDirectory() as uswid_data:
+            parent = os.path.join(uswid_data, "edk2.cdx.json")
+            with open(parent, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "components": [
+                            {
+                                "bom-ref": "pkg:github/tianocore/edk2@@VCS_TAG@",
+                                "name": "EDK II",
+                            }
+                        ]
+                    },
+                    f,
+                )
+            with mock.patch("sbom4edk2.sbom.subprocess.run") as run_mock:
+                completed = mock.Mock()
+                completed.returncode = 0
+                completed.stdout = completed.stderr = ""
+
+                def _fake_run(cmd, *_args, **_kwargs):
+                    save_idx = cmd.index("--save")
+                    with open(cmd[save_idx + 1], "w", encoding="utf-8") as fh:
+                        fh.write("{}")
+                    return completed
+
+                run_mock.side_effect = _fake_run
+                out = generate_sbom_from_checkout(edk2, "edk2", uswid_data=uswid_data)
+
+        self.assertIsNotNone(out)
+        cmd = run_mock.call_args.args[0]
+        self.assertIn("--load", cmd)
+        self.assertEqual(cmd[cmd.index("--load") + 1], parent)
+        self.assertIn("--fallback-path", cmd)
+        self.assertNotIn(
+            "--primary", cmd,
+            "parent template load uses auto-pick-first-firmware, not --primary",
         )
 
     def test_passes_fallback_path_when_provided(self):
@@ -503,7 +540,14 @@ class TestComputeEdk2PrimaryBomref(unittest.TestCase):
 # sbom4edk2.ghsa
 # ---------------------------------------------------------------------------
 
-from sbom4edk2.ghsa import _extract_edk2_version, _version_in_range, scan_sbom_with_ghsa
+from sbom4edk2.ghsa import (
+    _extract_edk2_version,
+    _infer_patched_versions,
+    _last_affected_yyyymm,
+    _next_edk2_release_after,
+    _version_in_range,
+    scan_sbom_with_ghsa,
+)
 
 
 class TestGhsa(unittest.TestCase):
@@ -565,6 +609,29 @@ class TestGhsa(unittest.TestCase):
 
     def test_unparseable_range_conservatively_true(self):
         self.assertTrue(_version_in_range(202602, "some garbage"))
+
+    # --- patched-version inference ------------------------------------------
+
+    def test_next_edk2_release_after_quarterly(self):
+        self.assertEqual(_next_edk2_release_after(202502), 202505)
+        self.assertEqual(_next_edk2_release_after(202408), 202411)
+        self.assertEqual(_next_edk2_release_after(202311), 202402)
+
+    def test_last_affected_from_less_than_or_equal(self):
+        self.assertEqual(_last_affected_yyyymm("<=202502"), 202502)
+
+    def test_last_affected_from_strict_less_than(self):
+        self.assertEqual(_last_affected_yyyymm("<202402"), 202311)
+
+    def test_last_affected_compound_range(self):
+        self.assertEqual(_last_affected_yyyymm(">=202311, <202402"), 202311)
+
+    def test_infer_patched_when_empty_uses_next_release(self):
+        self.assertEqual(_infer_patched_versions("", "<=202502"), "202505")
+        self.assertEqual(_infer_patched_versions("  ", "<=202408"), "202411")
+
+    def test_infer_patched_preserves_explicit_value(self):
+        self.assertEqual(_infer_patched_versions("202508", "<=202508"), "202508")
 
     # --- scan_sbom_with_ghsa (mocked) ---------------------------------------
 
@@ -653,6 +720,42 @@ class TestGhsa(unittest.TestCase):
                     self.assertEqual(len(df), 1)
                     self.assertEqual(df.iloc[0]["id"], "CVE-2025-9999")
                     self.assertEqual(df.iloc[0]["score"], 9.8)
+                    self.assertEqual(df.iloc[0]["fix_versions"], "202605")
+                finally:
+                    os.unlink(xlsx_path)
+        finally:
+            os.unlink(path)
+
+    def test_scan_excludes_sbom_at_or_past_inferred_fix(self):
+        """Empty patched_versions implies fix at next release after last affected."""
+        advisories = [
+            {
+                "ghsa_id": "GHSA-zzzz-zzzz-zzzz",
+                "cve_id": "CVE-2024-38797",
+                "severity": "medium",
+                "summary": "HashPeImage OOB read",
+                "published_at": "2025-04-07T00:00:00Z",
+                "html_url": "https://github.com/advisories/GHSA-zzzz",
+                "cvss_severities": {},
+                "identifiers": [],
+                "vulnerabilities": [
+                    {
+                        "package": {"name": "edk2"},
+                        "vulnerable_version_range": "<=202502",
+                        "patched_versions": "",
+                    }
+                ],
+            }
+        ]
+        path = self._make_sbom_file("202505")
+        try:
+            with patch("sbom4edk2.ghsa._fetch_advisories", return_value=advisories):
+                with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as xf:
+                    xlsx_path = xf.name
+                try:
+                    df = scan_sbom_with_ghsa(path, output_xlsx=xlsx_path)
+                    self.assertIsNotNone(df)
+                    self.assertTrue(df.empty)
                 finally:
                     os.unlink(xlsx_path)
         finally:
