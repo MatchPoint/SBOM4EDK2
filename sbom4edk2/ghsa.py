@@ -19,6 +19,12 @@ field ``202602``.
 
 Compound semver-style constraints are supported (e.g. ``>=202311, <202402``).
 
+When GitHub leaves ``patched_versions`` empty, TianoCore still treats the
+advisory as fixed: the fix release is taken to be the **next stable YYYYMM
+label** after the last affected label implied by ``vulnerable_version_range``
+(~quarterly cadence, e.g. ``<=202502`` → fix ``202505``).  SBOM versions at
+or after that fix release are not reported as affected.
+
 Output
 ------
 An Excel workbook ``CVE_List_ghsa.xlsx`` is written alongside the other scanner
@@ -80,6 +86,53 @@ def _version_in_range(version: int, range_str: str) -> bool:
         if op == ">" and not (version > ver):
             return False
     return True
+
+
+def _previous_edk2_release_before(yyyymm: int) -> int:
+    """EDK2 stable label immediately before *yyyymm* (~3 months prior)."""
+    year, month = divmod(yyyymm, 100)
+    month -= 3
+    while month < 1:
+        month += 12
+        year -= 1
+    return year * 100 + month
+
+
+def _next_edk2_release_after(yyyymm: int) -> int:
+    """Next TianoCore stable YYYYMM label after *yyyymm* (~quarterly cadence)."""
+    year, month = divmod(yyyymm, 100)
+    month += 3
+    while month > 12:
+        month -= 12
+        year += 1
+    return year * 100 + month
+
+
+def _last_affected_yyyymm(range_str: str) -> Optional[int]:
+    """Largest EDK2 YYYYMM release still inside *range_str*'s vulnerable window."""
+    if not range_str:
+        return None
+    constraints = _CONSTRAINT_RE.findall(range_str)
+    if not constraints:
+        return None
+    candidates: list[int] = []
+    for op, ver_str in constraints:
+        ver = int(ver_str)
+        if op == "<=":
+            candidates.append(ver)
+        elif op == "<":
+            candidates.append(_previous_edk2_release_before(ver))
+    return min(candidates) if candidates else None
+
+
+def _infer_patched_versions(patched: str, vulnerable_range: str) -> str:
+    """Return explicit *patched* or infer the next stable fix after last affected."""
+    if patched and str(patched).strip():
+        return str(patched).strip()
+    last = _last_affected_yyyymm(vulnerable_range)
+    if last is None:
+        return ""
+    return str(_next_edk2_release_after(last))
 
 
 def _fetch_advisories(github_token: Optional[str] = None) -> list[dict]:
@@ -187,15 +240,22 @@ def scan_sbom_with_ghsa(
         for vuln in vulns:
             pkg = vuln.get("package", {}) or {}
             vrange = vuln.get("vulnerable_version_range") or ""
-            patched = vuln.get("patched_versions") or ""
+            patched_raw = vuln.get("patched_versions") or ""
+            resolved_patch = _infer_patched_versions(patched_raw, vrange)
+            fix_ver = _extract_edk2_version(resolved_patch)
             pkg_name = pkg.get("name", "")
 
-            if edk2_ver is None or _version_in_range(edk2_ver, vrange):
-                applicable = True
-                if pkg_name:
-                    affected_packages.append(pkg_name)
-                if patched:
-                    patched_in.append(patched)
+            if edk2_ver is not None:
+                if fix_ver is not None and edk2_ver >= fix_ver:
+                    continue
+                if not _version_in_range(edk2_ver, vrange):
+                    continue
+
+            applicable = True
+            if pkg_name:
+                affected_packages.append(pkg_name)
+            if resolved_patch:
+                patched_in.append(resolved_patch)
 
         if applicable:
             rows.append({

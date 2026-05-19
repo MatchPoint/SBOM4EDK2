@@ -19,7 +19,7 @@ from dotenv import load_dotenv
 from sbom4edk2.cve_analyzer import generate_cve_report
 from sbom4edk2.ghsa import scan_sbom_with_ghsa
 from sbom4edk2.grype import is_grype_available, scan_sbom_with_grype
-from sbom4edk2.sbom import generate_sbom_from_checkout, run_command
+from sbom4edk2.sbom import _uswid_cmd, generate_sbom_from_checkout, run_command
 
 load_dotenv()
 
@@ -106,7 +106,7 @@ def main() -> None:
     location = os.path.abspath(args.location)
     logger.info("Scanning: %s", location)
 
-    if run_command(["uswid", "--version"]) != 0:
+    if run_command(_uswid_cmd() + ["--version"]) != 0:
         logger.error("uswid not found. Install with: pip install -r requirements.txt")
         sys.exit(1)
 

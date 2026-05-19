@@ -31,9 +31,15 @@ import json
 import logging
 import os
 import subprocess
-from typing import Optional
+import sys
+from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _uswid_cmd() -> List[str]:
+    """Invoke uswid reliably on Windows (``uswid.exe`` is not always on PATH)."""
+    return [sys.executable, "-m", "uswid.cli"]
 
 
 # ---------------------------------------------------------------------------
@@ -76,16 +82,30 @@ def generate_sbom_from_checkout(
 
     output_path = os.path.abspath(os.path.join(os.getcwd(), f"{output_name}.cdx.json"))
 
-    # Compute the expected post-substitution primary bom-ref so we can mark
-    # the EDK II firmware component explicitly. uswid's `.git`-discovery
-    # fallback replaces @VCS_TAG@ in the loaded edk2.cdx.json template with
-    # uSwidVcs.get_tag(), which extracts the longest digit run from the
-    # current `git describe` output (e.g. `edk2-stable202411` -> `"202411"`).
-    primary_bomref = _compute_edk2_primary_bomref(location)
+    # Match uswid.test_edk2_integration.test_primary_dir_cli_end_to_end: load the
+    # curated EDK II parent template, walk submodules under *location*, merge
+    # fallback templates, wire dependencies.  Optional --find scans every .inf
+    # (very slow on a full tree); set SBOM4EDK2_SCAN_INFS=1 to enable.
+    parent_cdx: Optional[str] = None
+    primary_bomref: Optional[str] = None
+    if uswid_data and os.path.isdir(uswid_data):
+        candidate = os.path.join(uswid_data, "edk2.cdx.json")
+        if os.path.isfile(candidate):
+            parent_cdx = candidate
 
-    cmd = [
-        "uswid",
-        "--find", location,
+    # When a parent template is loaded, @VCS_*@ is substituted at load time so
+    # the static bom-ref in the file no longer matches; let the CLI pick the
+    # first loaded component (EDK II) as primary.  Without a parent template,
+    # derive --primary from the checkout's git describe.
+    if parent_cdx is None:
+        primary_bomref = _compute_edk2_primary_bomref(location)
+
+    cmd = _uswid_cmd()
+    if parent_cdx:
+        cmd += ["--load", parent_cdx]
+    if os.environ.get("SBOM4EDK2_SCAN_INFS", "").strip() in ("1", "true", "yes"):
+        cmd += ["--find", location]
+    cmd += [
         "--primary-dir", location,
         "--fixup",
         "--save", output_path,
@@ -98,7 +118,9 @@ def generate_sbom_from_checkout(
         cmd += ["--primary", primary_bomref]
 
     logger.info("Invoking uswid: %s", " ".join(cmd))
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    env = os.environ.copy()
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if proc.returncode != 0:
         logger.error(
             "uswid CLI failed (rc=%d):\nstdout: %s\nstderr: %s",
@@ -114,6 +136,26 @@ def generate_sbom_from_checkout(
 
     logger.info("SBOM generated: %s", output_path)
     return output_path
+
+
+def _primary_bomref_from_template(edk2_cdx_path: str) -> Optional[str]:
+    """Return the static ``bom-ref`` from a loaded EDK II parent CDX template.
+
+    Must match the value in the file (often still containing ``@VCS_TAG@``)
+    so ``--primary`` resolves before post-load substitution, same as the
+    integration test in ``python-uswid-sbom``.
+    """
+    try:
+        with open(edk2_cdx_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.debug("Cannot read parent template %s: %s", edk2_cdx_path, exc)
+        return None
+    comps = data.get("components") or []
+    if comps and isinstance(comps[0], dict):
+        ref = comps[0].get("bom-ref")
+        return ref if isinstance(ref, str) and ref else None
+    return None
 
 
 def _compute_edk2_primary_bomref(location: str) -> Optional[str]:
@@ -254,7 +296,9 @@ def run_command(cmd: list[str]) -> int:
     """Run *cmd* and return its exit code. Stdout/stderr are logged."""
     logger.info("Running: %s", " ".join(cmd))
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        env = os.environ.copy()
+        env.setdefault("PYTHONIOENCODING", "utf-8")
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
         if proc.stdout:
             logger.debug("stdout: %s", proc.stdout.strip())
         if proc.stderr:
