@@ -49,3 +49,12 @@ The `--primary-dir` flag (new in `uswid >= 0.2.0`) does the heavy lifting that t
 - **GHSA patched-version inference** (`sbom4edk2/ghsa.py`): when `patched_versions` is empty, fix = next EDK2 stable YYYYMM after the last affected label from `vulnerable_version_range` (`_infer_patched_versions`, `_next_edk2_release_after`). SBOM versions `>=` that fix are not reported as affected. Unit tests in `TestGhsa` cover inference and applicability.
 - **Test suite**: `tests/test_sbom4edk2.py` contains unit tests covering `cpe`, `ghsa`, `grype`, `sbom` (including `generate_sbom_from_checkout` and GHSA inference), and `cve_analyzer` modules. Run with `python -m unittest tests.test_sbom4edk2` or `python -m pytest tests/`.
 - **Full runs are slow**: `main.py` clones the EDK2 repo (several GB with submodules) and makes many NVD API calls.
+
+## Related repos (read their AGENTS.md before cross-repo changes)
+
+| Repo | Agent doc |
+|------|-----------|
+| [python-uswid-sbom](https://github.com/MatchPoint/python-uswid-sbom) | SBOM engine — `uswid/submodule.py`, `--primary-dir`, format writers |
+| [VEX4EDK2](https://github.com/MatchPoint/VEX4EDK2) | Quarterly CSAF batch over this repo's CVE pipeline |
+
+**Rule:** SBOM assembly changes go in **python-uswid-sbom**; CVE/scanner changes stay here; quarterly release batching stays in **VEX4EDK2**.
