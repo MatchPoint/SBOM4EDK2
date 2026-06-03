@@ -1,14 +1,23 @@
 # SBOM4EDK2
 
-Generate a Software Bill of Materials (SBOM) from [TianoCore EDK II](https://github.com/tianocore/edk2) source code and run CVE vulnerability analysis via the [NIST NVD](https://nvd.nist.gov/) API, [Grype](https://github.com/anchore/grype), and TianoCore GitHub Security Advisories (GHSA).
+Generate a **source** CycloneDX Software Bill of Materials (SBOM) from [TianoCore EDK II](https://github.com/tianocore/edk2) checkouts. CVE analysis (NVD, Grype, GHSA) and CSAF VEX live in [VEX4EDK2](https://github.com/MatchPoint/VEX4EDK2).
 
-> **SBOM engine:** Per-`.inf` parsing uses
-> [python-uswid-sbom](https://github.com/MatchPoint/python-uswid-sbom), a fork of
-> [python-uswid](https://github.com/hughsie/python-uswid) extended with UEFI SBOM
-> Guidelines (CISA Level 1) compliance features.  Top-level assembly — recursive
-> `.gitmodules` walk, per-submodule version resolution via `git describe`,
-> CycloneDX `dependencies[]` tree, and the `--sbom-type` lifecycle flag — is
-> implemented directly in `sbom4edk2/sbom.py` (`_merge_inf_cdx_direct`).
+> **Source SBOM engine:** SBOM4EDK2 is self-contained (no `uswid` Python package).
+> From a cloned EDK II tree it emits `metadata.component` for EDK II plus one
+> component per OSS **git submodule** (`.gitmodules` + [uswid-data](https://github.com/hughsie/uswid-data)
+> templates), with nested CycloneDX `dependencies[]` for submodule containment.
+> It does **not** list per-`.inf` build modules (e.g. OpensslLib). Build/binary
+> SBOM tooling lives in upstream [python-uswid](https://github.com/hughsie/python-uswid)
+> (Richard Hughes).
+
+## Documentation
+
+| Guide | Description |
+|-------|-------------|
+| [docs/source-sbom.md](docs/source-sbom.md) | **Source SBOM** scope, prerequisites, validation checklist, troubleshooting |
+| [docs/ecosystem.md](docs/ecosystem.md) | How SBOM4EDK2 relates to VEX4EDK2, StreamingVEX, uswid-data, python-uswid |
+| [docs/testing.md](docs/testing.md) | Unit tests and optional EDK II smoke validation |
+| [AGENTS.md](AGENTS.md) | Notes for AI assistants and contributors |
 
 ## Quick Start
 
@@ -21,121 +30,52 @@ source venv/bin/activate        # Linux/macOS
 # 2. Install dependencies
 pip install -r requirements.txt
 
-# 3. Configure your NVD API key (free: https://nvd.nist.gov/developers/request-an-api-key)
-cp .env.example .env
-# Edit .env and add your key: NVD_API_KEY=your_key_here
-
-# 4. Run (example — clone EDK2 and generate full report)
+# 3. Run (uswid-data templates are auto-cloned on first use)
 python main.py -o edk2 -r https://github.com/tianocore/edk2.git
+# Or, existing EDK II tree:
+# python edk2_json_generator.py -l /path/to/edk2 -n edk2
+
+# 5. CVE scan (VEX4EDK2) — after pip install -e /path/to/VEX4EDK2:
+# python scripts/get_cve_response.py edk2.cdx.json
 ```
+
+See [docs/source-sbom.md](docs/source-sbom.md) for submodule initialization requirements and output validation.
 
 ## Project Structure
 
 ```
 sbom4edk2/              Shared library
-  nvd.py                NVD API client (CPE lookup, CVE retrieval, caching)
-  cpe.py                CPE pattern construction and name normalisation
-  cve_analyzer.py       Concurrent CVE analysis and Excel report generation
-  grype.py              Grype-based SBOM scanner (no API key required)
-  sbom.py               CycloneDX parsing, INF-driven SBOM assembly, per-submodule VCS resolution, dependency tree
+  sbom.py               Source SBOM orchestration
+  cdx_merge.py          EDK2 + OSS submodule CycloneDX assembly
+  cdx_emit.py           CycloneDX JSON writer
+  submodule_data.py     .gitmodules walk, NVD CPE map, URL aliases
+  nvd_cpe.py            NVD dictionary validation, CPE omission log
+  version_normalize.py  git describe normalization
+  pedigree.py           OSS post-tag pedigree patches
+  edk2_version.py       edk2-stable tag parsing
+  template_loader.py    uswid-data template loading
+  uswid_data.py         Auto-fetch uswid-data templates (shallow clone)
   git_utils.py          Git clone/pull operations
 
-main.py                 Scenario 1 — clone repo + generate SBOM + CVE list
-edk2_json_generator.py  Scenario 2 — local checkout + generate SBOM + CVE list
-get_cve_response.py     Scenario 3 — existing SBOM + generate CVE list only
+main.py                 Scenario 1 — clone repo + generate source SBOM
+edk2_json_generator.py  Scenario 2 — local checkout + generate source SBOM
 ```
 
-## Vulnerability Scanning
+## CVE scanning (VEX4EDK2)
 
-SBOM4EDK2 supports three complementary CVE sources, each producing its own
-Excel report.  They are combined in a single run for complete coverage.
+SBOM4EDK2 writes `<name>.cdx.json` only. NVD, Grype, GHSA, and quarterly CSAF
+batch output live in [VEX4EDK2](https://github.com/MatchPoint/VEX4EDK2):
 
-### Scanner auto-detection
+- `python scripts/get_cve_response.py <cdx.json>` — Scenario 3 (existing SBOM)
+- `python -m vex4edk2.batch` — full pipeline (SBOM + NVD + GHSA → CSAF)
 
-The `--scanner` flag defaults to **`auto`**: if `NVD_API_KEY` is set the NVD
-REST API is used; otherwise grype is used.  You never need to set this flag
-explicitly unless you want to override the default behaviour.
+See the VEX4EDK2 README for `--scanner`, `NVD_API_KEY`, and grype install notes.
 
-```bash
-# Auto (recommended) — uses NVD if key is present, grype otherwise
-python get_cve_response.py edk2.cdx.json
-
-# Force NVD (requires API key)
-python get_cve_response.py edk2.cdx.json --scanner nvd -k <your_key>
-
-# Force grype (no key needed)
-python get_cve_response.py edk2.cdx.json --scanner grype
-
-# Run both NVD and grype side-by-side
-python get_cve_response.py edk2.cdx.json --scanner both -k <your_key>
-```
-
-### Trade-offs: NVD vs. grype
-
-| | NVD REST API (`--scanner nvd`) | Grype (`--scanner grype`) |
-|---|---|---|
-| **API key required** | Yes — free at [nvd.nist.gov](https://nvd.nist.gov/developers/request-an-api-key) | No |
-| **Local DB download** | No — queries NVD cloud per-component | ~600 MB on first run, then daily deltas (~1–5 MB) |
-| **Scan time (full EDK2, 1335 components)** | ~30 minutes (rate-limited REST calls) | ~10 seconds (local DB lookup) |
-| **Vulnerability coverage** | NVD only | NVD + GitHub Advisory DB + OS distro advisories |
-| **Matching method** | CPE only | CPE + PURL |
-| **EPSS exploit scores** | No | Yes |
-| **Works offline** | No | Yes (after initial DB download) |
-| **Best for** | Authoritative NVD output, scheduled CI/CD pipelines | Ad-hoc scans, local development, offline environments |
-
-**Recommendation:** Use `auto` (the default).  For ad-hoc or offline use,
-grype is faster and requires no registration.  For production pipelines where
-you want authoritative NVD output and already have a key, use `--scanner nvd`.
-
-> **Note on CPE accuracy:** `cpe.py` uses the explicit `cpe` field already
-> present on the component when available rather than constructing a wildcard
-> pattern.  Those CPE strings get accurate version numbers at SBOM-build time:
-> `_merge_inf_cdx_direct` walks the EDK2 `.gitmodules` tree (including nested
-> submodules under `openssl/`), runs `git describe` in each submodule clone,
-> normalises the result to an NVD-matchable form (strips `v`/`V`, project-name,
-> and `+suffix` prefixes), and substitutes `@VCS_TAG@`/`@VCS_VERSION@` per
-> component.  A small URL alias map handles org renames
-> (`Mbed-TLS`↔`ARMmbed`, `dgibson/dtc`↔`devicetree-org/pylibfdt`).  Components
-> whose VCS URL doesn't match any EDK2 submodule are dropped to avoid emitting
-> unsubstituted placeholders.
-
-### Installing grype
-
-```bash
-# Linux / WSL
-curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
-    | sh -s -- -b ~/.local/bin
-
-# Windows (winget)
-winget install Anchore.Grype
-```
-
-Grype downloads its vulnerability database on first run (~600 MB, cached in
-`~/.cache/grype/`).  Subsequent runs fetch only daily deltas (~1–5 MB).
-
-### TianoCore GitHub Security Advisories (GHSA) — always included
-
-In addition to the selected scanner, **all scripts automatically query the
-TianoCore EDK2 GitHub security advisories** and produce `CVE_List_ghsa_*.xlsx`.
-
-These advisories are published directly by the EDK2 maintainers — often
-**months before NVD processes them** — making them the most timely source of
-EDK2-specific CVEs.  No API key is required; set `GITHUB_TOKEN` in `.env` to
-raise the GitHub API rate limit from 60 to 5,000 requests/hour.
-
-To skip the GHSA check:
-
-```bash
-python get_cve_response.py edk2.cdx.json --no-ghsa
-```
-
-### Output files
-
-| File | Source | Notes |
-|------|--------|-------|
-| `CVE_List.xlsx` | NVD REST API | Produced when `--scanner nvd` or `both` |
-| `CVE_List_grype_<name>.xlsx` | Grype local DB | Produced when `--scanner grype`, `both`, or `auto` (no key) |
-| `CVE_List_ghsa_<name>.xlsx` | TianoCore GHSA | Always produced (use `--no-ghsa` to skip) |
+> **CPE at SBOM build time:** `cdx_merge.build_source_sbom` walks `.gitmodules`,
+> runs `git describe` per OSS submodule, normalises versions for NVD, applies the
+> eleven-entry `SUBMODULE_CPE_MAP`, and keeps `cpe` only when the exact name exists
+> in the NVD CPE dictionary. Components without a dictionary match are listed in
+> `<name>.cpe-omissions.log` with a `reason=` code (see [docs/source-sbom.md](docs/source-sbom.md)).
 
 ## SBOM structure
 
@@ -143,8 +83,8 @@ The generated `<name>.cdx.json` is a CycloneDX 1.6 document with:
 
 - `metadata.component` — the EDK2 firmware itself (supplier `TianoCore`,
   version e.g. `202602`, CPE `cpe:2.3:a:tianocore:edk2:edk2-stable202602:*:...`).
-- `components[]` — one entry per parsed `.inf` plus one per matched OSS
-  submodule from the recursive `.gitmodules` walk.
+- `components[]` — one entry per matched OSS git submodule from the recursive
+  `.gitmodules` walk (plus uswid-data templates).
 - `dependencies[]` — captures the nested submodule structure as
   `ref`/`dependsOn` edges.  For example: the EDK2 primary depends on
   `openssl`, `libspdm`, `mbedtls`, …; `openssl` in turn depends on
@@ -159,87 +99,73 @@ because openssl pulls quiche in).
 
 ## Usage
 
-All scripts read `NVD_API_KEY` from `.env` automatically. The `-k` flag overrides it.
-
-### Scenario 1 — Clone EDK2, Generate SBOM, and Create CVE List
+### Scenario 1 — Clone EDK2 and generate source SBOM
 
 ```bash
-python main.py -o <output_name> -r <edk2_repo_url> [-k <api_key>]
+python main.py -o <output_name> -r <edk2_repo_url>
 ```
 
 | Flag | Description |
 |------|-------------|
 | `-o`, `--output` | Output name (clone directory and CDX filename, without extension) |
 | `-r`, `--repo` | Git URL of the EDK2 repository |
-| `-k`, `--apikey` | *(Optional)* NVD API key — overrides `.env`; required when `--scanner nvd/both` |
-| `--sbom-type` | *(Optional)* `source` \| `build` \| `binary` — SBOM lifecycle type (default: `source`) |
-| `--scanner` | *(Optional)* `auto` \| `nvd` \| `grype` \| `both` — scanner back-end (default: `auto`) |
-| `--no-ghsa` | *(Optional)* Skip TianoCore GHSA advisory check (included by default) |
+| `--sbom-type` | *(Optional)* `source` \| `build` \| `binary` (default: `source`) |
 
-**Example (auto — uses NVD if key set, otherwise grype):**
+**Example:**
 ```bash
 python main.py -o edk2 -r https://github.com/tianocore/edk2.git
 ```
 
-**Outputs:** `edk2.cdx.json`, `CVE_List.xlsx` or `CVE_List_grype_edk2.xlsx` (auto-selected), `CVE_List_ghsa_edk2.xlsx`, log
+**Output:** `edk2.cdx.json` in the current directory (plus clone under `./edk2`). When
+some OSS components lack a dictionary `cpe`, `edk2.cpe-omissions.log` is written beside the SBOM.
 
 ---
 
-### Scenario 2 — Local EDK2 Checkout: Generate SBOM and CVE List
+### Scenario 2 — Local EDK2 checkout: generate source SBOM
 
 ```bash
-python edk2_json_generator.py -l <path> -n <name> [-k <key>] [--uswid-data <path>] [--parent-yaml <file>] [--max-workers N]
+python edk2_json_generator.py -l <path> -n <name> [--uswid-data <path>]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `-l`, `--location` | Path to local EDK2 source tree |
+| `-l`, `--location` | Path to local EDK2 source tree (submodules initialized) |
 | `-n`, `--jsonname` | Output CDX filename (without extension) |
-| `-k`, `--apikey` | *(Optional)* NVD API key — overrides `.env`; required when `--scanner nvd/both` |
-| `--uswid-data` | *(Optional)* Path to [uswid-data](https://github.com/hughsie/uswid-data.git) clone |
-| `--parent-yaml` | *(Optional)* Parent component YAML for merge |
-| `--max-workers` | *(Optional)* Thread count for `.inf` processing (default: 12) |
-| `--sbom-type` | *(Optional)* `source` \| `build` \| `binary` — SBOM lifecycle type per UEFI SBOM Guidelines §3.1.1.3 (default: `source`) |
-| `--scanner` | *(Optional)* `auto` \| `nvd` \| `grype` \| `both` — scanner back-end (default: `auto`) |
-| `--no-ghsa` | *(Optional)* Skip TianoCore GHSA advisory check (included by default) |
+| `--uswid-data` | *(Optional)* Override path to [uswid-data](https://github.com/hughsie/uswid-data.git); auto-cloned if omitted |
+| `--sbom-type` | *(Optional)* `source` \| `build` \| `binary` (default: `source`) |
 
-**Example (auto — recommended):**
+**Example:**
 ```bash
-python edk2_json_generator.py -l /path/to/edk2 -n edk2 --uswid-data /path/to/uswid-data
+python edk2_json_generator.py -l /path/to/edk2 -n edk2
 ```
 
-**Outputs:** `cdx_json_output/` (individual per-`.inf` CDX files), `cdx_json_output/<name>.cdx.json` (merged SBOM), `CVE_List.xlsx`, `edk2_json_generator_<timestamp>.log`
+**Output:** `<name>.cdx.json` in cwd, optional `<name>.cpe-omissions.log`, and
+`edk2_json_generator_<timestamp>.log`
 
 ---
 
-### Scenario 3 — Existing SBOM: Generate CVE List Only
+### Scenario 3 — CVE scan (VEX4EDK2)
+
+Run in the VEX4EDK2 repo after installing it and setting `PYTHONPATH` to SBOM4EDK2 if needed for batch:
 
 ```bash
-python get_cve_response.py <cdx_file> [-k <api_key>]
+python scripts/get_cve_response.py edk2.cdx.json
 ```
 
-| Argument / Flag | Description |
-|-----------------|-------------|
-| `cdx_file` | Path to CycloneDX SBOM (`.cdx.json`) |
-| `-k`, `--apikey` | *(Optional)* NVD API key — overrides `.env`; required when `--scanner nvd/both` |
-| `--scanner` | *(Optional)* `auto` \| `nvd` \| `grype` \| `both` — scanner back-end (default: `auto`) |
-| `--no-ghsa` | *(Optional)* Skip TianoCore GHSA advisory check (included by default) |
+## Testing
 
-**Example (auto — recommended):**
 ```bash
-python get_cve_response.py edk2.cdx.json
+pip install -r requirements.txt
+python -m unittest discover -s tests -p "test_*.py" -v
 ```
 
-**Outputs:**
-- `CVE_List.xlsx` (NVD, if key set) or `CVE_List_grype_<name>.xlsx` (auto-selected)
-- `CVE_List_ghsa_<name>.xlsx` (TianoCore GHSA, always)
-- `get_cve_response.log`
+Details: [docs/testing.md](docs/testing.md).
 
 ## Notes
 
-- The NVD API has rate limits. The client includes automatic retry with exponential backoff for 429/5xx responses.
-- Full EDK2 runs are slow and network-heavy (large git clone + many NVD API calls).
-- All scripts produce log files for troubleshooting.
+- Full EDK2 checkouts are slow and network-heavy (recursive submodules).
+- Source SBOM generation is fast (no per-`.inf` scan); CVE timing is documented in VEX4EDK2.
+- Scenario 1–2 scripts produce log files for troubleshooting.
 
 ## License
 

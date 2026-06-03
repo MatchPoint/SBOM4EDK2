@@ -1,0 +1,12 @@
+[
+  "cpe:2.3:a:arm:mbed_tls:3.6.5:*:*:*:*:*:*:*",
+  "cpe:2.3:a:arm:mbed_tls:3.6.4:*:*:*:*:*:*:*",
+  "cpe:2.3:a:google:boringssl:2018-06-14:*:*:*:*:*:*:*",
+  "cpe:2.3:a:google:boringssl:-:*:*:*:*:*:*:*",
+  "cpe:2.3:a:google:brotli:1.1.0:*:*:*:*:*:*:*",
+  "cpe:2.3:a:jansson_project:jansson:2.14:*:*:*:*:*:*:*",
+  "cpe:2.3:a:oniguruma_project:oniguruma:6.9.10:*:*:*:*:*:*:*",
+  "cpe:2.3:a:openssl:openssl:3.5.1:*:*:*:*:*:*:*",
+  "cpe:2.3:a:python-ecdsa_project:python-ecdsa:0.14.1:*:*:*:*:*:*:*",
+  "cpe:2.3:a:dmtf:libspdm:3.7.0:*:*:*:*:*:*:*"
+]

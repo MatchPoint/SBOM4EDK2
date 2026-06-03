@@ -4,27 +4,64 @@
 
 ### Overview
 
-SBOM4EDK2 is a Python CLI tool that generates SBOMs from TianoCore EDK2 firmware source code and runs CVE analysis via three complementary sources: the NIST NVD API, Grype (local DB, no key required), and TianoCore GitHub Security Advisories (GHSA, always included). Shared logic lives in the `sbom4edk2/` package; three thin CLI scripts provide the entry points. See `README.md` for usage.
+SBOM4EDK2 is a Python CLI that builds a **source** CycloneDX SBOM from a cloned
+[TianoCore EDK II](https://github.com/tianocore/edk2) tree (EDK2 primary +
+OSS git submodules). It does **not** run CVE scans — use [VEX4EDK2](https://github.com/MatchPoint/VEX4EDK2)
+for NVD, Grype, and GHSA analysis and CSAF VEX output.
+
+No dependency on `python-uswid` or the deprecated MatchPoint/python-uswid-sbom fork.
+Per-`.inf` **build** SBOMs remain the domain of
+[python-uswid](https://github.com/hughsie/python-uswid) (Richard Hughes).
 
 ### Environment setup
 
-- Python 3.11+ with a virtual environment at `/workspace/venv`.
-- Activate: `source /workspace/venv/bin/activate`
-- Dependencies: `pip install -r requirements.txt` (includes `uswid` from a pinned git commit).
-- NVD API key (optional): set `NVD_API_KEY` in `.env` or pass `-k` on the CLI. Without it, the default `--scanner auto` mode falls back to grype automatically — NVD queries are not attempted and no error is raised.
+- Python 3.11+ with a virtual environment.
+- `pip install -r requirements.txt` (no `uswid` package).
+- **uswid-data** CDX templates are **auto-cloned** on first run (`sbom4edk2.uswid_data.ensure_uswid_data`);
+  optional override via `--uswid-data` or `USWID_DATA`.
 
 ### Running the tools
 
 ```
-python main.py -o <name> -r <repo_url>            # Scenario 1
-python edk2_json_generator.py -l <path> -n <name>  # Scenario 2
-python get_cve_response.py <cdx_file>               # Scenario 3
+python main.py -o <name> -r <repo_url>            # Scenario 1 — clone + SBOM
+python edk2_json_generator.py -l <path> -n <name>  # Scenario 2 — local checkout + SBOM
 ```
+
+CVE scan (Scenario 3) — **VEX4EDK2**:
+
+```
+python scripts/get_cve_response.py <path/to>.cdx.json
+# or: vex4edk2-cve-scan <path/to>.cdx.json
+```
+
+### Source SBOM pipeline (`sbom4edk2/`)
+
+| Module | Role |
+|--------|------|
+| `cdx_merge.py` | Assemble source SBOM: primary + OSS components + nested `dependencies[]` |
+| `cdx_emit.py` | Write CycloneDX JSON to disk |
+| `submodule_data.py` | `.gitmodules` walk, URL aliases, `SUBMODULE_CPE_MAP` |
+| `nvd_cpe.py` | NVD CPE dictionary validation, `<stem>.cpe-omissions.log` |
+| `version_normalize.py` | `git describe` → clean (CPE) + display (`1.1.5+23`) versions |
+| `pedigree.py` | Post-tag commits → `pedigree.patches[]`; `[upstream]` / `[vendor pin]` labels |
+| `edk2_version.py` | `edk2-stableYYYYMM` parsing for primary `@VCS_*@` |
+| `template_loader.py` | Load uswid-data JSON templates |
 
 ### Gotchas
 
-- **CDX merge**: The SBOM merge step uses a direct Python JSON merge (`sbom4edk2/sbom.py:_merge_inf_cdx_direct`) rather than `uswid --load`, because `uswid --load` silently overwrites `metadata.component` on each file loaded, leaving only the last component in the output. Do not revert to `uswid --load` for the merge step.
-- **Submodule version resolution**: `_merge_inf_cdx_direct` also (a) recursively walks every `.gitmodules` under the EDK2 checkout via `_parse_edk2_gitmodules`, (b) runs `git describe` in each submodule clone via `_resolve_submodule_vcs`, (c) normalises the result to an NVD-matchable version, and (d) substitutes `@VCS_TAG@` / `@VCS_VERSION@` per component.  A small `_URL_ALIASES` map handles upstream org renames.  Components whose VCS URL doesn't match any EDK2 submodule are dropped so the output never contains unsubstituted placeholders.
-- **Dependency tree**: After version substitution, `_merge_inf_cdx_direct` emits a CycloneDX `dependencies[]` array.  Edges are derived by longest-common-path-prefix matching among resolved submodule directories — e.g. submodules under `CryptoPkg/Library/OpensslLib/openssl/` become children of `openssl`, and top-level submodules become children of the EDK2 primary component.
-- **Test suite**: `tests/test_sbom4edk2.py` contains 64 unit tests covering `cpe`, `ghsa`, `grype`, `sbom`, and `cve_analyzer` modules. Run with `python -m pytest tests/`.
-- **Full runs are slow**: `main.py` clones the EDK2 repo (several GB with submodules) and makes many NVD API calls.
+- **No `.inf` scan:** OpensslLib-style modules are build-time artifacts, not
+  separate source-SBOM components. Output is ~tens of OSS rows, not ~1100 INF rows.
+- **Submodules must be initialized:** `git submodule update --init --recursive`
+  on the EDK2 checkout before Scenario 2.
+- **Tests:** `python -m pytest tests/` — `test_source_sbom.py` + trimmed `test_sbom4edk2.py`.
+  CVE scanner tests live in VEX4EDK2 `tests/test_cve_scan.py`.
+
+### Ecosystem
+
+| Repo | Role |
+|------|------|
+| **SBOM4EDK2** | EDK2 **source** SBOM only (this repo) |
+| **VEX4EDK2** | CVE scan (NVD, Grype, GHSA) + quarterly CSAF VEX |
+| **uswid-data** | Curated CDX templates (data only) |
+| **python-uswid** | Build/binary uSWID SBOM tooling (optional) |
+| **StreamingVEX** | Ingest/delivery (separate repo) |
