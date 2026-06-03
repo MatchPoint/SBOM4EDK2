@@ -92,6 +92,10 @@ After generating `edk2.cdx.json`, confirm:
 6. Substitute `@VCS_VERSION@`, `@VCS_TAG@`, and `@VCS_AUTHORS@` in template JSON.
 7. Drop templates that still contain placeholders (submodule not present in this checkout).
 8. **Synthesize** minimal components for submodules in `.gitmodules` that have no uswid-data template.
+   **Supplier** names use `sbom4edk2.supplier_data` (GitHub org / slug map) instead of
+   uswid-data ``<project> developers`` labels when a globally recognized name exists
+   (e.g. Brotli → **Google**, Mbed TLS → **Arm**). Curated non-generic template
+   suppliers (e.g. **The OpenSSL Project**) are kept unless a slug map applies.
 9. Apply `SUBMODULE_CPE_MAP` (GitHub `owner/repo` → NVD vendor/product) and validate each
    candidate `cpe:2.3:a:…` against the NVD CPE API (`sbom4edk2.nvd_cpe`). Template `cpe`
    values from uswid-data are kept only when they pass the same check.

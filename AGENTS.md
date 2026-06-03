@@ -41,6 +41,7 @@ python scripts/get_cve_response.py <path/to>.cdx.json
 | `cdx_merge.py` | Assemble source SBOM: primary + OSS components + nested `dependencies[]` |
 | `cdx_emit.py` | Write CycloneDX JSON to disk |
 | `submodule_data.py` | `.gitmodules` walk, URL aliases, `SUBMODULE_CPE_MAP` |
+| `supplier_data.py` | Recognized `supplier.name` (overrides generic uswid-data labels) |
 | `nvd_cpe.py` | NVD CPE dictionary validation, `<stem>.cpe-omissions.log` |
 | `version_normalize.py` | `git describe` → clean (CPE) + display (`1.1.5+23`) versions |
 | `pedigree.py` | Post-tag commits → `pedigree.patches[]`; `[upstream]` / `[vendor pin]` labels |

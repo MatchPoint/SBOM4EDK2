@@ -49,6 +49,7 @@ sbom4edk2/              Shared library
   cdx_merge.py          EDK2 + OSS submodule CycloneDX assembly
   cdx_emit.py           CycloneDX JSON writer
   submodule_data.py     .gitmodules walk, NVD CPE map, URL aliases
+  supplier_data.py      Recognized supplier names (override generic templates)
   nvd_cpe.py            NVD dictionary validation, CPE omission log
   version_normalize.py  git describe normalization
   pedigree.py           OSS post-tag pedigree patches

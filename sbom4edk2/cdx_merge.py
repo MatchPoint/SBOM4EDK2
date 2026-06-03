@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
@@ -29,6 +28,7 @@ from sbom4edk2.submodule_data import (
     resolve_with_aliases,
     walk_gitmodules,
 )
+from sbom4edk2.supplier_data import apply_recognized_supplier, github_slug_from_url
 from sbom4edk2.template_loader import (
     iter_fallback_components,
     load_edk2_primary_template,
@@ -39,18 +39,11 @@ from sbom4edk2.version_normalize import resolve_submodule_vcs
 
 logger = logging.getLogger(__name__)
 
-_GITHUB_OWNER_REPO_RE = re.compile(
-    r"github\.com[:/](?P<owner>[^/]+)/(?P<repo>[^/.]+)"
-)
-
 _PHASE_MAP = {"source": "pre-build", "build": "build", "binary": "post-build"}
 
 
 def _github_slug_from_url(url: str) -> Optional[str]:
-    m = _GITHUB_OWNER_REPO_RE.search(url or "")
-    if not m:
-        return None
-    return f"{m.group('owner')}/{m.group('repo')}"
+    return github_slug_from_url(url)
 
 
 def _cpe_map_entry(slug: str) -> Optional[Tuple[str, str]]:
@@ -147,9 +140,12 @@ def _synthesize_component(
         "bom-ref": bom_ref,
         "name": name,
         "version": vcs.display_version,
-        "supplier": {"name": slug.split("/")[0] if slug else "NOASSERTION"},
+        "supplier": {"name": "NOASSERTION"},
         "externalReferences": [{"type": "vcs", "url": vcs_url}],
     }
+    apply_recognized_supplier(comp, vcs_url)
+    if comp["supplier"]["name"] == "NOASSERTION" and slug:
+        comp["supplier"]["name"] = slug.split("/")[0]
     _apply_nvd_cpe(comp, vcs.clean, vcs_url)
     ped = pedigree_for_submodule_dir(
         submodule_dir,
@@ -185,6 +181,7 @@ def _resolve_template_component(
         return None
 
     resolved["version"] = vcs.display_version
+    apply_recognized_supplier(resolved, vcs_url)
     _apply_nvd_cpe(resolved, vcs.clean, vcs_url)
     ped = pedigree_for_submodule_dir(
         submodule_dir,
@@ -328,7 +325,7 @@ def build_source_sbom(
                 {
                     "vendor": "SBOM4EDK2",
                     "name": "SBOM4EDK2",
-                    "version": "0.6.0",
+                    "version": "0.6.1",
                 }
             ],
             "lifecycles": [{"phase": phase}],

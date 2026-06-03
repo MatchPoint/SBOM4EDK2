@@ -66,6 +66,47 @@ class TestNormalizeSubmoduleVersion(unittest.TestCase):
         self.assertEqual(format_display_version("3.5.1", 0), "3.5.1")
 
 
+class TestSupplierData(unittest.TestCase):
+    def test_brotli_template_overridden_to_google(self) -> None:
+        from sbom4edk2.supplier_data import apply_recognized_supplier
+
+        comp = {"supplier": {"name": "Brotli developers"}}
+        apply_recognized_supplier(comp, "https://github.com/google/brotli")
+        self.assertEqual(comp["supplier"]["name"], "Google")
+
+    def test_openssl_template_kept(self) -> None:
+        from sbom4edk2.supplier_data import apply_recognized_supplier
+
+        comp = {"supplier": {"name": "The OpenSSL Project"}}
+        apply_recognized_supplier(comp, "https://github.com/openssl/openssl")
+        self.assertEqual(comp["supplier"]["name"], "The OpenSSL Project")
+
+    def test_openssl_generic_developers_becomes_openssl(self) -> None:
+        from sbom4edk2.supplier_data import apply_recognized_supplier
+
+        comp = {"supplier": {"name": "openssl developers"}}
+        apply_recognized_supplier(comp, "https://github.com/openssl/openssl")
+        self.assertEqual(comp["supplier"]["name"], "OpenSSL")
+
+    def test_slug_map_overrides_mbedtls_contributors(self) -> None:
+        from sbom4edk2.supplier_data import apply_recognized_supplier
+
+        comp = {"supplier": {"name": "The Mbed TLS Contributors"}}
+        apply_recognized_supplier(comp, "https://github.com/ARMmbed/mbedtls")
+        self.assertEqual(comp["supplier"]["name"], "Arm")
+
+    def test_berkeley_softfloat_recognized_supplier(self) -> None:
+        from sbom4edk2.supplier_data import apply_recognized_supplier
+
+        comp = {"supplier": {"name": "Berkeley SoftFloat developers"}}
+        apply_recognized_supplier(
+            comp, "https://github.com/ucb-bar/berkeley-softfloat-3"
+        )
+        self.assertEqual(
+            comp["supplier"]["name"],
+            "University of California, Berkeley",
+        )
+
 class TestSubmoduleData(unittest.TestCase):
     def test_canonicalize_vcs_url(self):
         self.assertEqual(
@@ -547,6 +588,7 @@ class TestNoUswidDependency(unittest.TestCase):
             "sbom4edk2.template_loader",
             "sbom4edk2.uswid_data",
             "sbom4edk2.nvd_cpe",
+            "sbom4edk2.supplier_data",
         ):
             with self.subTest(module=mod):
                 importlib.import_module(mod)
