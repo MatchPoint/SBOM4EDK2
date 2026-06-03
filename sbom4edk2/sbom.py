@@ -1,29 +1,4 @@
-"""SBOM4EDK2 SBOM helpers.
-
-Thin orchestration over the ``uswid`` CLI from ``python-uswid-sbom``.
-
-The end-to-end SBOM generation pipeline (``.inf`` parsing, ``.gitmodules``
-walk, ``git describe`` version normalisation, ``@VCS_*@`` placeholder
-substitution against each submodule's actual directory, orphan-template
-filtering, and CycloneDX ``dependencies[]`` tree wiring) now lives entirely
-in ``python-uswid-sbom`` (>= 0.2.0). See:
-
-* :mod:`uswid.cli` — implements ``--primary-dir`` (Phase 2b)
-* :mod:`uswid.submodule` — generic submodule mechanics, OSS data tables
-* :mod:`uswid.edk2` — EDK II-specific seam (tag parser, light/full mode
-  package lists)
-
-What stays in this module:
-
-* :func:`generate_sbom_from_checkout` — orchestration entry point that
-  invokes ``uswid`` as a subprocess and returns the resulting CDX path
-* :func:`parse_sbom`, :func:`_extract_components` — small CDX reader
-  helpers used by the downstream CVE analysis code and the test suite
-* :func:`sanitize_cdx_file` — defensive ``source-dir == null`` cleanup
-  (kept as a safety net for older uswid output)
-* :func:`list_cdx_files`, :func:`find_inf_files`, :func:`run_command` —
-  small utility helpers retained for back-compat with existing scripts
-"""
+"""CycloneDX source SBOM generation and parsing helpers."""
 
 from __future__ import annotations
 
@@ -31,20 +6,11 @@ import json
 import logging
 import os
 import subprocess
-import sys
 from typing import List, Optional
 
+from sbom4edk2.cdx_merge import write_source_sbom
+
 logger = logging.getLogger(__name__)
-
-
-def _uswid_cmd() -> List[str]:
-    """Invoke uswid reliably on Windows (``uswid.exe`` is not always on PATH)."""
-    return [sys.executable, "-m", "uswid.cli"]
-
-
-# ---------------------------------------------------------------------------
-# Generation: thin wrapper over the uswid CLI
-# ---------------------------------------------------------------------------
 
 
 def generate_sbom_from_checkout(
@@ -55,24 +21,17 @@ def generate_sbom_from_checkout(
     sbom_type: str = "source",
     **legacy_kwargs,
 ) -> Optional[str]:
-    """Generate a merged CycloneDX SBOM by invoking ``uswid --primary-dir``.
+    """Build a **source** CycloneDX SBOM for an EDK II checkout.
 
-    *location* is the EDK II source-tree root, *output_name* is the basename
-    (without extension) for the resulting ``<output_name>.cdx.json`` (written
-    in the current working directory), *uswid_data* (optional) points at a
-    directory of curated submodule CDX templates with ``@VCS_*@`` placeholders.
+    Emits ``metadata.component`` for EDK II plus one component per OSS git
+    submodule (from ``.gitmodules`` and uswid-data templates). Does **not**
+    scan ``.inf`` build modules.
 
-    All other kwargs (``parent_yaml``, ``max_workers``) are kept for
-    back-compat but silently ignored; the per-INF thread pool and CDX
-    file-by-file merge are no longer needed because ``uswid --find`` walks
-    the whole tree in one pass.
-
-    Returns the absolute path to the generated SBOM on success, ``None`` on
-    failure. Failures are logged with the captured CLI stderr.
+    Returns the absolute path to ``<output_name>.cdx.json`` on success.
     """
     if legacy_kwargs:
         logger.debug(
-            "generate_sbom_from_checkout: ignoring legacy kwargs %s",
+            "Ignoring legacy kwargs: %s",
             sorted(legacy_kwargs.keys()),
         )
 
@@ -81,115 +40,15 @@ def generate_sbom_from_checkout(
         return None
 
     output_path = os.path.abspath(os.path.join(os.getcwd(), f"{output_name}.cdx.json"))
-
-    # Match uswid.test_edk2_integration.test_primary_dir_cli_end_to_end: load the
-    # curated EDK II parent template, walk submodules under *location*, merge
-    # fallback templates, wire dependencies.  Optional --find scans every .inf
-    # (very slow on a full tree); set SBOM4EDK2_SCAN_INFS=1 to enable.
-    parent_cdx: Optional[str] = None
-    primary_bomref: Optional[str] = None
-    if uswid_data and os.path.isdir(uswid_data):
-        candidate = os.path.join(uswid_data, "edk2.cdx.json")
-        if os.path.isfile(candidate):
-            parent_cdx = candidate
-
-    # When a parent template is loaded, @VCS_*@ is substituted at load time so
-    # the static bom-ref in the file no longer matches; let the CLI pick the
-    # first loaded component (EDK II) as primary.  Without a parent template,
-    # derive --primary from the checkout's git describe.
-    if parent_cdx is None:
-        primary_bomref = _compute_edk2_primary_bomref(location)
-
-    cmd = _uswid_cmd()
-    if parent_cdx:
-        cmd += ["--load", parent_cdx]
-    if os.environ.get("SBOM4EDK2_SCAN_INFS", "").strip() in ("1", "true", "yes"):
-        cmd += ["--find", location]
-    cmd += [
-        "--primary-dir", location,
-        "--fixup",
-        "--save", output_path,
-        "--format", "cyclonedx",
-        "--sbom-type", sbom_type,
-    ]
-    if uswid_data and os.path.isdir(uswid_data):
-        cmd += ["--fallback-path", uswid_data]
-    if primary_bomref:
-        cmd += ["--primary", primary_bomref]
-
-    logger.info("Invoking uswid: %s", " ".join(cmd))
-    env = os.environ.copy()
-    env.setdefault("PYTHONIOENCODING", "utf-8")
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
-    if proc.returncode != 0:
-        logger.error(
-            "uswid CLI failed (rc=%d):\nstdout: %s\nstderr: %s",
-            proc.returncode,
-            proc.stdout[-2000:] if proc.stdout else "",
-            proc.stderr[-2000:] if proc.stderr else "",
-        )
+    rc = write_source_sbom(
+        os.path.abspath(location),
+        output_path,
+        uswid_data_dir=uswid_data,
+        sbom_type=sbom_type,
+    )
+    if rc != 0:
         return None
-
-    if not os.path.isfile(output_path):
-        logger.error("uswid succeeded but did not write %s", output_path)
-        return None
-
-    logger.info("SBOM generated: %s", output_path)
     return output_path
-
-
-def _primary_bomref_from_template(edk2_cdx_path: str) -> Optional[str]:
-    """Return the static ``bom-ref`` from a loaded EDK II parent CDX template.
-
-    Must match the value in the file (often still containing ``@VCS_TAG@``)
-    so ``--primary`` resolves before post-load substitution, same as the
-    integration test in ``python-uswid-sbom``.
-    """
-    try:
-        with open(edk2_cdx_path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, json.JSONDecodeError) as exc:
-        logger.debug("Cannot read parent template %s: %s", edk2_cdx_path, exc)
-        return None
-    comps = data.get("components") or []
-    if comps and isinstance(comps[0], dict):
-        ref = comps[0].get("bom-ref")
-        return ref if isinstance(ref, str) and ref else None
-    return None
-
-
-def _compute_edk2_primary_bomref(location: str) -> Optional[str]:
-    """Predict the post-substitution bom-ref of the loaded EDK II template.
-
-    Mirrors ``uswid.vcs.uSwidVcs.get_tag``: runs
-    ``git describe --tags --abbrev=0`` in *location* and extracts the
-    longest digit run from the dash-separated tag parts. For the EDK II
-    standard tag scheme (``edk2-stable<YYYYMM>``) this yields the bare
-    six-digit form (e.g. ``"202411"``).
-
-    Returns ``None`` if git is unavailable or the directory has no tags;
-    in that case the caller omits ``--primary`` and lets ``uswid``'s
-    auto-pick-first-firmware-component fallback do its job.
-    """
-    try:
-        from uswid.vcs import uSwidVcs
-    except ImportError:
-        logger.debug("uswid not importable; skipping --primary computation")
-        return None
-    try:
-        vcs = uSwidVcs(filepath=location, dirpath=location)
-        tag = vcs.get_tag()
-    except Exception as exc:
-        logger.debug("uSwidVcs.get_tag() failed: %s", exc)
-        return None
-    if not tag or tag == "NOASSERTION":
-        return None
-    return f"pkg:github/tianocore/edk2@{tag}"
-
-
-# ---------------------------------------------------------------------------
-# CDX parsing (used by the CVE-analysis pipeline and the test suite)
-# ---------------------------------------------------------------------------
 
 
 def parse_sbom(path: str) -> list[dict]:
@@ -216,64 +75,20 @@ def _extract_components(data: dict) -> list[dict]:
     if "components" in data:
         comps = data["components"]
     elif "metadata" in data:
-        comps = (
-            data.get("metadata", {})
-            .get("component", {})
-            .get("components", [])
-        )
+        meta = data.get("metadata", {}).get("component", {})
+        comps = meta.get("components", []) if isinstance(meta, dict) else []
     else:
         return []
     return comps if isinstance(comps, list) else []
 
 
-# ---------------------------------------------------------------------------
-# Small utility helpers (kept for back-compat with existing scripts and tests)
-# ---------------------------------------------------------------------------
-
-
-def list_cdx_files(folder: str) -> list[str]:
-    """Return sorted list of ``*.cdx.json`` paths in *folder*."""
-    try:
-        paths = sorted(
-            os.path.join(folder, f)
-            for f in os.listdir(folder)
-            if f.lower().endswith(".cdx.json")
-        )
-    except OSError as exc:
-        logger.error("Error listing CDX files in %s: %s", folder, exc)
-        return []
-    logger.info("Found %d CDX files in %s", len(paths), folder)
-    return paths
-
-
-def find_inf_files(root: str) -> list[str]:
-    """Recursively find all ``.inf`` files under *root*."""
-    results: list[str] = []
-    for dirpath, _, filenames in os.walk(root):
-        for fn in filenames:
-            if fn.lower().endswith(".inf"):
-                results.append(os.path.join(dirpath, fn))
-    logger.info("Found %d .inf files under %s", len(results), root)
-    return results
-
-
 def sanitize_cdx_file(cdx_path: str) -> bool:
-    """Replace ``"source-dir": null`` with ``""`` in-place.
-
-    Historically this worked around a uswid bug that crashed on null
-    source-dir values during ``--fixup``. The bug is fixed upstream, so
-    this is now purely a safety net — kept for back-compat with the test
-    suite and any third-party SBOMs that still contain such nulls.
-
-    Returns ``True`` when the file was readable and writeable (whether or
-    not modifications were necessary); ``False`` if the file is missing
-    or unreadable.
-    """
+    """Fix ``None`` source-dir values in a CDX file."""
     try:
         with open(cdx_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
-        logger.warning("Cannot read %s for sanitisation: %s", cdx_path, exc)
+        logger.warning("Cannot read %s: %s", cdx_path, exc)
         return False
 
     modified = False
@@ -287,25 +102,20 @@ def sanitize_cdx_file(cdx_path: str) -> bool:
             with open(cdx_path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
         except OSError as exc:
-            logger.warning("Cannot write sanitised %s: %s", cdx_path, exc)
+            logger.error("Failed to write %s: %s", cdx_path, exc)
             return False
     return True
 
 
 def run_command(cmd: list[str]) -> int:
-    """Run *cmd* and return its exit code. Stdout/stderr are logged."""
     logger.info("Running: %s", " ".join(cmd))
     try:
-        env = os.environ.copy()
-        env.setdefault("PYTHONIOENCODING", "utf-8")
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.stdout:
             logger.debug("stdout: %s", proc.stdout.strip())
         if proc.stderr:
             logger.warning("stderr: %s", proc.stderr.strip())
-        if proc.returncode != 0:
-            logger.warning("Command exited with code %d", proc.returncode)
         return proc.returncode
-    except OSError as exc:
+    except Exception as exc:
         logger.error("Command failed: %s", exc)
         return 1
