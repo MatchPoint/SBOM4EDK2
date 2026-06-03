@@ -1,0 +1,20 @@
+SBOM4EDK2
+=========
+
+Copyright (c) 2024-2026 Brian Mullen and contributors.
+
+Portions of submodule version normalization, Git submodule walk logic, NVD CPE
+reference tables (SUBMODULE_CPE_MAP, SUBMODULE_URL_ALIASES), and post-tag
+pedigree patch assembly are derived from work originally contributed to the
+MatchPoint/python-uswid-sbom fork:
+
+  Copyright (c) 2026 HP Development Company, L.P.
+  SPDX-License-Identifier: BSD-2-Clause-Patent
+
+CycloneDX templates under a separate checkout of hughsie/uswid-data are
+maintained by the uSWID / TianoCore ecosystem (see README).
+
+Upstream uSWID library (build/binary SBOM tooling, not bundled here):
+
+  Copyright (c) 2019 Richard Hughes <richard@hughsie.com>
+  SPDX-License-Identifier: BSD-2-Clause-Patent

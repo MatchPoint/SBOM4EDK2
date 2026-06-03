@@ -214,8 +214,14 @@ __marimo__/
 CVE_List*.xlsx
 API_Calls_Report*.xlsx
 
-# Generated EDK2 SBOM at repo root — produced by python-uswid-sbom integration test
+# Generated EDK2 SBOM at repo root — produced by edk2_json_generator / main.py
 /edk2.cdx.json
+*.cdx.json
+!tests/fixtures/**/*.cdx.json
+*.cpe-omissions.log
+
+# Local EDK II checkout used for smoke tests
+work/
 
 # Intermediate per-submodule CycloneDX files produced during SBOM generation
 uswid-data/
